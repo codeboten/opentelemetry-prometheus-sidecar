@@ -27,6 +27,7 @@ import (
 	"github.com/go-kit/kit/log/level"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/pkg/labels"
+	"go.opentelemetry.io/otel/label"
 )
 
 const DefaultAPIEndpoint = "api/v1/targets"
@@ -36,12 +37,12 @@ func cacheKey(job, instance string) string {
 }
 
 type Target interface {
-	Labels() labels.Labels
-	DiscoveredLabels() labels.Labels
+	Labels() *label.Set
+	DiscoveredLabels() *label.Set
 }
 
 type Getter interface {
-	Get(ctx context.Context, lset labels.Labels) (Target, error)
+	Get(ctx context.Context, lset *label.Set) (Target, error)
 }
 
 // Cache retrieves target information from the Prometheus API and caches it.
@@ -129,7 +130,7 @@ func (c *Cache) refresh(ctx context.Context) error {
 
 		// If the exact target already exists, reuse the same memory object.
 		for _, prev := range c.targets[key] {
-			if labelsEqual(target.Labels, prev.Labels) {
+			if labelsEqual(toSet(target.Labels), toSet(prev.Labels)) {
 				target = prev
 				break
 			}
@@ -162,8 +163,15 @@ func (c *Cache) refresh(ctx context.Context) error {
 // is generally a non-issue if the additional label keys are consistently set across all targets
 // for the job/instance combination.
 // If no target is found, nil is returned.
-func (c *Cache) Get(ctx context.Context, lset labels.Labels) (Target, error) {
-	key := cacheKey(lset.Get("job"), lset.Get("instance"))
+func (c *Cache) Get(ctx context.Context, lset *label.Set) (Target, error) {
+	jobVal, hasJob := lset.Value("job")
+	instanceVal, hasInstance := lset.Value("instance")
+
+	if !hasJob || !hasInstance {
+		return nil, errors.New("missing job or instance in target.Get")
+	}
+
+	key := cacheKey(jobVal.Emit(), instanceVal.Emit())
 
 	c.mtx.RLock()
 	defer c.mtx.RUnlock()
@@ -241,11 +249,12 @@ func (c *Cache) Get(ctx context.Context, lset labels.Labels) (Target, error) {
 // targetMatch returns the first target in the entry that matches all labels of the input
 // set iff it has them set.
 // This way metric labels are skipped while consistent target labels are considered.
-func targetMatch(targets []*targetEntry, lset labels.Labels) (*targetEntry, bool) {
+func targetMatch(targets []*targetEntry, lset *label.Set) (*targetEntry, bool) {
 Outer:
 	for _, t := range targets {
 		for _, tl := range t.Labels {
-			if lset.Get(tl.Name) != tl.Value {
+			lookup, has := lset.Value(label.Key(tl.Name))
+			if !has || lookup.Emit() != tl.Value {
 				continue Outer
 			}
 		}
@@ -274,12 +283,12 @@ type targetWrapper struct {
 
 var _ Target = &targetWrapper{}
 
-func (t targetWrapper) Labels() labels.Labels {
-	return t.target.Labels
+func (t targetWrapper) Labels() *label.Set {
+	return toSet(t.target.Labels)
 }
 
-func (t targetWrapper) DiscoveredLabels() labels.Labels {
-	return t.target.DiscoveredLabels
+func (t targetWrapper) DiscoveredLabels() *label.Set {
+	return toSet(t.target.DiscoveredLabels)
 }
 
 func Make(labels, discovered labels.Labels) Target {
@@ -303,14 +312,15 @@ func DropTargetLabels(series, target labels.Labels) labels.Labels {
 	return repl
 }
 
-func labelsEqual(a, b labels.Labels) bool {
-	if len(a) != len(b) {
-		return false
+func labelsEqual(a, b *label.Set) bool {
+	return a.Equals(b)
+}
+
+func toSet(ls labels.Labels) *label.Set {
+	t := make([]label.KeyValue, len(ls))
+	for i, l := range ls {
+		t[i] = label.Key(l.Name).String(l.Value)
 	}
-	for i, l := range a {
-		if l.Name != b[i].Name || l.Value != b[i].Value {
-			return false
-		}
-	}
-	return true
+	s := label.NewSet(t...)
+	return &s
 }

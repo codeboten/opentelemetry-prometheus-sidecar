@@ -23,7 +23,12 @@ import (
 	"testing"
 
 	"github.com/prometheus/prometheus/pkg/labels"
+	"go.opentelemetry.io/otel/label"
 )
+
+func labelsFromStrings(kvs ...string) *label.Set {
+	return toSet(labels.FromStrings(kvs...))
+}
 
 func TestTargetCache_Error(t *testing.T) {
 	var handler http.HandlerFunc
@@ -67,15 +72,15 @@ func TestTargetCache_Error(t *testing.T) {
 	} {
 		handler = hf
 
-		target, err := c.Get(ctx, labels.FromStrings("job", "a", "instance", "b"))
+		target, err := c.Get(ctx, labelsFromStrings("job", "a", "instance", "b"))
 		if target != nil {
-			t.Fatalf("%d: unexpected target %s", i, target.Labels())
+			t.Fatalf("%d: unexpected target %v", i, target.Labels())
 		}
 		if err == nil {
 			t.Fatalf("%d: expected error but got none", i)
 		}
 		// Basic check that cache entries don't get purged during errors.
-		target, err = c.Get(ctx, labels.FromStrings("job", "a", "instance", "c"))
+		target, err = c.Get(ctx, labelsFromStrings("job", "a", "instance", "c"))
 		if err != nil {
 			t.Fatalf("%d: unexpected error: %s", i, err)
 		}
@@ -123,26 +128,26 @@ func TestTargetCache_Success(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	target1, err := c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "job1", "instance", "instance1"))
+	target1, err := c.Get(ctx, labelsFromStrings("__name__", "metric1", "job", "job1", "instance", "instance1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !labelsEqual(target1.Labels(), labels.FromStrings("job", "job1", "instance", "instance1")) {
-		t.Fatalf("unexpected target labels %s", target1.Labels())
+	if !labelsEqual(target1.Labels(), labelsFromStrings("job", "job1", "instance", "instance1")) {
+		t.Fatalf("unexpected target labels %v", target1.Labels())
 	}
-	if !labelsEqual(target1.DiscoveredLabels(), labels.FromStrings("instance", "instance1", "job", "job1", "something", "else")) {
-		t.Fatalf("unexpected discovered target labels %s", target1.DiscoveredLabels())
+	if !labelsEqual(target1.DiscoveredLabels(), labelsFromStrings("instance", "instance1", "job", "job1", "something", "else")) {
+		t.Fatalf("unexpected discovered target labels %v", target1.DiscoveredLabels())
 	}
 	// Get a non-existant target. The first time it should attempt a refresh.
-	target, err := c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "absent", "instance", "absent"))
+	target, err := c.Get(ctx, labelsFromStrings("__name__", "metric1", "job", "absent", "instance", "absent"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if target != nil {
-		t.Fatalf("unexpected target %s", target.Labels())
+		t.Fatalf("unexpected target %v", target.Labels())
 	}
 	// The first target we queried should be the same heap object after refresh.
-	target, err = c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "job1", "instance", "instance1"))
+	target, err = c.Get(ctx, labelsFromStrings("__name__", "metric1", "job", "job1", "instance", "instance1"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,36 +160,36 @@ func TestTargetCache_Success(t *testing.T) {
 		return nil
 	}
 	// Get absent target from above again. This time it must not do a request.
-	target, err = c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "absent", "instance", "absent"))
+	target, err = c.Get(ctx, labelsFromStrings("__name__", "metric1", "job", "absent", "instance", "absent"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if target != nil {
-		t.Fatalf("unexpected target %s", target.Labels())
+		t.Fatalf("unexpected target %v", target.Labels())
 	}
 	// Get targets that have been retrieved through a previous refresh.
 	// This must not trigger refreshs.
-	target, err = c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "job1", "instance", "instance2"))
+	target, err = c.Get(ctx, labelsFromStrings("__name__", "metric1", "job", "job1", "instance", "instance2"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !labelsEqual(target.Labels(), labels.FromStrings("job", "job1", "instance", "instance2")) {
-		t.Fatalf("unexpected target labels %s", target.Labels())
+	if !labelsEqual(target.Labels(), labelsFromStrings("job", "job1", "instance", "instance2")) {
+		t.Fatalf("unexpected target labels %v", target.Labels())
 	}
 	// Get the targets with the same job/instance but differing ports.
-	target, err = c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "job2", "instance", "instance1", "port", "port1"))
+	target, err = c.Get(ctx, labelsFromStrings("__name__", "metric1", "job", "job2", "instance", "instance1", "port", "port1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !labelsEqual(target.Labels(), labels.FromStrings("job", "job2", "instance", "instance1", "port", "port1")) {
-		t.Fatalf("unexpected target labels %s", target.Labels())
+	if !labelsEqual(target.Labels(), labelsFromStrings("job", "job2", "instance", "instance1", "port", "port1")) {
+		t.Fatalf("unexpected target labels %v", target.Labels())
 	}
-	target, err = c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "job2", "instance", "instance1", "port", "port2"))
+	target, err = c.Get(ctx, labelsFromStrings("__name__", "metric1", "job", "job2", "instance", "instance1", "port", "port2"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !labelsEqual(target.Labels(), labels.FromStrings("job", "job2", "instance", "instance1", "port", "port2")) {
-		t.Fatalf("unexpected target labels %s", target.Labels())
+	if !labelsEqual(target.Labels(), labelsFromStrings("job", "job2", "instance", "instance1", "port", "port2")) {
+		t.Fatalf("unexpected target labels %v", target.Labels())
 	}
 
 	// Set a new response, which should invalidate previous targets.
@@ -193,20 +198,20 @@ func TestTargetCache_Success(t *testing.T) {
 			{Labels: labels.FromStrings("job", "job3", "instance", "instance1")},
 		}
 	}
-	target, err = c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "job3", "instance", "instance1", "a", "a1"))
+	target, err = c.Get(ctx, labelsFromStrings("__name__", "metric1", "job", "job3", "instance", "instance1", "a", "a1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !labelsEqual(target.Labels(), labels.FromStrings("job", "job3", "instance", "instance1")) {
-		t.Fatalf("unexpected target labels %s", target.Labels())
+	if !labelsEqual(target.Labels(), labelsFromStrings("job", "job3", "instance", "instance1")) {
+		t.Fatalf("unexpected target labels %v", target.Labels())
 	}
 	// Old targets should be gone.
-	target, err = c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "job1", "instance", "instance1"))
+	target, err = c.Get(ctx, labelsFromStrings("__name__", "metric1", "job", "job1", "instance", "instance1"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if target != nil {
-		t.Fatalf("unexpected target %s", target.Labels())
+		t.Fatalf("unexpected target %v", target.Labels())
 	}
 }
 
@@ -226,7 +231,7 @@ func TestTargetCache_EmptyEntry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "job1", "instance", "instance1"))
+	c.Get(ctx, labelsFromStrings("__name__", "metric1", "job", "job1", "instance", "instance1"))
 
 	// Empty entry should be kept in cache.
 	val, ok := c.targets[cacheKey("job1", "instance-not-exists")]
@@ -238,7 +243,7 @@ func TestTargetCache_EmptyEntry(t *testing.T) {
 	}
 
 	// Create a new empty entry by querying job/instance pair not available.
-	c.Get(ctx, labels.FromStrings("__name__", "metric2", "job", "job2", "instance", "instance-not-exists"))
+	c.Get(ctx, labelsFromStrings("__name__", "metric2", "job", "job2", "instance", "instance-not-exists"))
 	val, ok = c.targets[cacheKey("job2", "instance-not-exists")]
 	if !ok {
 		t.Fatalf("Negative cache should be kept.")
@@ -253,7 +258,7 @@ func TestTargetCache_EmptyEntry(t *testing.T) {
 			{Labels: labels.FromStrings("job", "job1", "instance", "instance1")},
 		}
 	}
-	c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "job1", "instance", "instance1"))
+	c.Get(ctx, labelsFromStrings("__name__", "metric1", "job", "job1", "instance", "instance1"))
 
 	// Empty entry created should be kept in cache.
 	val, ok = c.targets[cacheKey("job2", "instance-not-exists")]
@@ -289,8 +294,8 @@ func TestDropTargetLabels(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := DropTargetLabels(c.series, c.target); !labelsEqual(got, c.result) {
-			t.Fatalf("expected %s for series %s and target %s but got %s", c.result, c.series, c.target, got)
+		if got := DropTargetLabels(c.series, c.target); !labelsEqual(toSet(got), toSet(c.result)) {
+			t.Fatalf("expected %v for series %s and target %s but got %v", toSet(c.result), c.series, c.target, toSet(got))
 		}
 	}
 }
@@ -351,7 +356,7 @@ func TestLabelDiscovery(t *testing.T) {
 
 			tgt, err := c.Get(
 				ctx,
-				labels.FromStrings(
+				labelsFromStrings(
 					"__name__", "metric1",
 					"job", kase.ident.Get("job"),
 					"instance", kase.ident.Get("instance"),
@@ -360,10 +365,10 @@ func TestLabelDiscovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !labelsEqual(tgt.Labels(), kase.ident) {
+			if !labelsEqual(tgt.Labels(), toSet(kase.ident)) {
 				t.Fatalf("unexpected target labels %v != %v", tgt.Labels(), kase.ident)
 			}
-			if !labelsEqual(tgt.DiscoveredLabels(), kase.expect) {
+			if !labelsEqual(tgt.DiscoveredLabels(), toSet(kase.expect)) {
 				t.Fatalf("unexpected discovered target labels %v != %v", tgt.DiscoveredLabels(), kase.expect)
 			}
 		})
