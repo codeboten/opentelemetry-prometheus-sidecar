@@ -15,7 +15,6 @@ package retrieval
 
 import (
 	"context"
-	"sort"
 	"sync"
 	"time"
 
@@ -52,23 +51,32 @@ var (
 // point.
 type tsDesc struct {
 	Name      string
-	Labels    labels.Labels // Sorted
-	Resource  labels.Labels // Sorted
+	Labels    *label.Set
+	Resource  *label.Set
 	Kind      metadata.Kind
 	ValueType metadata.ValueType
 }
 
+// walRef are also called "series reference" or Ref in Prometheus data structs
+type walRef uint64
+
+type seriesKey struct {
+	name     string
+	labels   label.Distinct
+	resource label.Distinct
+}
+
 type seriesGetter interface {
 	// Same interface as the standard map getter.
-	get(ctx context.Context, ref uint64) (*seriesCacheEntry, bool, error)
+	get(ctx context.Context, ref walRef) (*seriesCacheEntry, bool, error)
 
 	// Get the reset timestamp and adjusted value for the input sample.
 	// If false is returned, the sample should be skipped.
-	getResetAdjusted(ref uint64, t int64, v float64) (int64, float64, bool)
+	getResetAdjusted(ref walRef, t int64, v float64) (int64, float64, bool)
 
 	// Attempt to set the new most recent time range for the series with given hash.
 	// Returns false if it failed, in which case the sample must be discarded.
-	updateSampleInterval(hash uint64, start, end int64) bool
+	updateSampleInterval(key seriesKey, start, end int64) bool
 }
 
 // seriesCache holds a mapping from series reference to label set.
@@ -88,9 +96,9 @@ type seriesCache struct {
 	lastCheckpoint int
 	mtx            sync.Mutex
 	// Map from series reference to various cached information about it.
-	entries map[uint64]*seriesCacheEntry
+	entries map[walRef]*seriesCacheEntry
 	// Map from series hash to most recently written interval.
-	intervals map[uint64]sampleInterval
+	intervals map[seriesKey]sampleInterval
 }
 
 type seriesCacheEntry struct {
@@ -98,7 +106,6 @@ type seriesCacheEntry struct {
 	metadata *metadata.Entry
 	lset     labels.Labels
 	suffix   string
-	hash     uint64
 
 	hasReset       bool
 	resetValue     float64
@@ -129,6 +136,14 @@ func (e *seriesCacheEntry) shouldRefresh() bool {
 	return !e.populated() && time.Since(e.lastRefresh) > refreshInterval
 }
 
+func (e *seriesCacheEntry) key() seriesKey {
+	return seriesKey{
+		name:     e.desc.Name,
+		labels:   e.desc.Labels.Equivalent(),
+		resource: e.desc.Resource.Equivalent(),
+	}
+}
+
 func newSeriesCache(
 	logger log.Logger,
 	dir string,
@@ -147,8 +162,8 @@ func newSeriesCache(
 		filters:       filters,
 		targets:       targets,
 		metaget:       metaget,
-		entries:       map[uint64]*seriesCacheEntry{},
-		intervals:     map[uint64]sampleInterval{},
+		entries:       map[walRef]*seriesCacheEntry{},
+		intervals:     map[seriesKey]sampleInterval{},
 		metricsPrefix: metricsPrefix,
 		renames:       renames,
 	}
@@ -193,7 +208,7 @@ func (c *seriesCache) garbageCollect() error {
 	// references.
 	var (
 		r      = wal.NewReader(sr)
-		exists = map[uint64]struct{}{}
+		exists = map[walRef]struct{}{}
 		dec    record.Decoder
 		series []record.RefSeries
 	)
@@ -207,7 +222,7 @@ func (c *seriesCache) garbageCollect() error {
 			return errors.Wrap(err, "decode series")
 		}
 		for _, s := range series {
-			exists[s.Ref] = struct{}{}
+			exists[walRef(s.Ref)] = struct{}{}
 		}
 	}
 	if r.Err() != nil {
@@ -222,7 +237,7 @@ func (c *seriesCache) garbageCollect() error {
 	defer c.mtx.Unlock()
 
 	for ref, entry := range c.entries {
-		if _, ok := exists[ref]; !ok && entry.maxSegment <= cpNum {
+		if _, ok := exists[walRef(ref)]; !ok && entry.maxSegment <= cpNum {
 			delete(c.entries, ref)
 		}
 	}
@@ -230,7 +245,7 @@ func (c *seriesCache) garbageCollect() error {
 	return nil
 }
 
-func (c *seriesCache) get(ctx context.Context, ref uint64) (*seriesCacheEntry, bool, error) {
+func (c *seriesCache) get(ctx context.Context, ref walRef) (*seriesCacheEntry, bool, error) {
 	c.mtx.Lock()
 	e, ok := c.entries[ref]
 	c.mtx.Unlock()
@@ -251,10 +266,10 @@ func (c *seriesCache) get(ctx context.Context, ref uint64) (*seriesCacheEntry, b
 
 // updateSampleInterval attempts to set the new most recent time range for the series with given hash.
 // Returns false if it failed, in which case the sample must be discarded.
-func (c *seriesCache) updateSampleInterval(hash uint64, start, end int64) bool {
-	iv, ok := c.intervals[hash]
+func (c *seriesCache) updateSampleInterval(key seriesKey, start, end int64) bool {
+	iv, ok := c.intervals[key]
 	if !ok || iv.accepts(start, end) {
-		c.intervals[hash] = sampleInterval{start, end}
+		c.intervals[key] = sampleInterval{start, end}
 		return true
 	}
 	return false
@@ -271,7 +286,7 @@ func (si *sampleInterval) accepts(start, end int64) bool {
 // getResetAdjusted takes a sample for a referenced series and returns
 // its reset timestamp and adjusted value.
 // If the last return argument is false, the sample should be dropped.
-func (c *seriesCache) getResetAdjusted(ref uint64, t int64, v float64) (int64, float64, bool) {
+func (c *seriesCache) getResetAdjusted(ref walRef, t int64, v float64) (int64, float64, bool) {
 	c.mtx.Lock()
 	e, ok := c.entries[ref]
 	c.mtx.Unlock()
@@ -301,7 +316,7 @@ func (c *seriesCache) getResetAdjusted(ref uint64, t int64, v float64) (int64, f
 
 // set the label set for the given reference.
 // maxSegment indicates the the highest segment at which the series was possibly defined.
-func (c *seriesCache) set(ctx context.Context, ref uint64, lset labels.Labels, maxSegment int) error {
+func (c *seriesCache) set(ctx context.Context, ref walRef, lset labels.Labels, maxSegment int) error {
 	exported := c.filters == nil || matchFilters(lset, c.filters)
 
 	if !exported {
@@ -318,7 +333,7 @@ func (c *seriesCache) set(ctx context.Context, ref uint64, lset labels.Labels, m
 	return c.refresh(ctx, ref)
 }
 
-func (c *seriesCache) refresh(ctx context.Context, ref uint64) error {
+func (c *seriesCache) refresh(ctx context.Context, ref walRef) error {
 	c.mtx.Lock()
 	entry := c.entries[ref]
 	c.mtx.Unlock()
@@ -340,16 +355,7 @@ func (c *seriesCache) refresh(ctx context.Context, ref uint64) error {
 		level.Debug(c.logger).Log("msg", "target not found", "labels", entry.lset)
 		return nil
 	}
-	// Remove __name__ label.
-	for i, l := range entryLabels {
-		if l.Name == "__name__" {
-			entryLabels = append(entryLabels[:i], entryLabels[i+1:]...)
-			break
-		}
-	}
 
-	// Remove target.Labels, which are redundant with Resource.
-	entryLabels = targets.DropTargetLabels(entryLabels, target.Labels())
 	var (
 		metricName     = entry.lset.Get("__name__")
 		baseMetricName string
@@ -379,22 +385,33 @@ func (c *seriesCache) refresh(ctx context.Context, ref uint64) error {
 			return nil
 		}
 	}
+
+	// Remove __name__ label.
+	// Remove target.Labels, which are redundant with Resource.
 	// Handle label modifications for histograms early so we don't build the label map twice.
 	// We have to remove the 'le' label which defines the bucket boundary.
-	if meta.MetricType == textparse.MetricTypeHistogram {
-		for i, l := range entryLabels {
-			if l.Name == "le" {
-				entryLabels = append(entryLabels[:i], entryLabels[i+1:]...)
-				break
+	entryLabels = func() *label.Set {
+		targetLabels := target.Labels()
+		filtered, _ := entryLabels.Filter(func(kv label.KeyValue) bool {
+			if kv.Key == "__name__" {
+				return false
 			}
-		}
-	}
+			if meta.MetricType == textparse.MetricTypeHistogram && kv.Key == "le" {
+				return false
+			}
+			lookup, has := targetLabels.Value(kv.Key)
+			if !has {
+				return true
+			}
+			return lookup != kv.Value
+		})
+		return &filtered
+	}()
 	ts := tsDesc{
 		Name:     c.getMetricName(c.metricsPrefix, metricName),
 		Labels:   entryLabels,
-		Resource: target.DiscoveredLabels(), // Note: pre-sorted
+		Resource: target.DiscoveredLabels(),
 	}
-	sort.Sort(&ts.Labels)
 
 	switch meta.MetricType {
 	case textparse.MetricTypeCounter:
@@ -437,7 +454,6 @@ func (c *seriesCache) refresh(ctx context.Context, ref uint64) error {
 	entry.desc = &ts
 	entry.metadata = meta
 	entry.suffix = suffix
-	entry.hash = hashSeries(ts)
 
 	return nil
 }

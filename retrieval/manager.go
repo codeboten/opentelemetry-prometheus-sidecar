@@ -31,6 +31,7 @@ import (
 	"github.com/prometheus/prometheus/tsdb/fileutil"
 	"github.com/prometheus/prometheus/tsdb/record"
 	"github.com/prometheus/prometheus/tsdb/wal"
+	"go.opentelemetry.io/otel/label"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -149,7 +150,7 @@ Outer:
 				continue
 			}
 			for _, s := range series {
-				seriesCache.set(ctx, s.Ref, s.Labels, r.tailer.CurrentSegment())
+				seriesCache.set(ctx, walRef(s.Ref), s.Labels, r.tailer.CurrentSegment())
 			}
 		case record.Samples:
 			// Skip sample records before the the boundary offset.
@@ -190,7 +191,7 @@ Outer:
 					time.Sleep(backoff)
 				}
 
-				outputSample, hash, newSamples, err := builder.next(ctx, samples)
+				outputSample, newSamples, err := builder.next(ctx, samples)
 				samples = newSamples
 				if err != nil {
 					level.Warn(r.logger).Log("msg", "Failed to build sample", "err", err)
@@ -200,7 +201,7 @@ Outer:
 				if outputSample == nil {
 					continue
 				}
-				r.appender.Append(hash, outputSample)
+				r.appender.Append(0 /* @@@ hash */, outputSample)
 				produced++
 			}
 
@@ -267,37 +268,15 @@ func SaveProgressFile(dir string, offset int) error {
 	return nil
 }
 
-// copyLabels copies a slice of labels.  The caller will mutate the
-// copy, otherwise the types are the same.  Note that the code could
-// be restructured to avoid this copy.
-func copyLabels(input labels.Labels) labels.Labels {
-	output := make(labels.Labels, len(input))
-	copy(output, input)
-	return output
-}
-
-func hashSeries(s tsDesc) uint64 {
-	const sep = '\xff'
-	h := hashNew()
-
-	h = hashAdd(h, s.Name)
-	h = hashAddByte(h, sep)
-
-	// Both lists are sorted
-	for _, l := range s.Labels {
-		h = hashAddByte(h, sep)
-		h = hashAdd(h, l.Name)
-		h = hashAddByte(h, sep)
-		h = hashAdd(h, l.Value)
+// copyLabels copies a slice of labels into a *label.Set.
+func copyLabels(ls labels.Labels) *label.Set {
+	// Note: duplicate of ../targets/targets.go:toSet()
+	t := make([]label.KeyValue, len(ls))
+	for i, l := range ls {
+		t[i] = label.Key(l.Name).String(l.Value)
 	}
-	h = hashAddByte(h, sep)
-	for _, l := range s.Resource {
-		h = hashAddByte(h, sep)
-		h = hashAdd(h, l.Name)
-		h = hashAddByte(h, sep)
-		h = hashAdd(h, l.Value)
-	}
-	return h
+	s := label.NewSet(t...)
+	return &s
 }
 
 func exponential(d time.Duration) time.Duration {

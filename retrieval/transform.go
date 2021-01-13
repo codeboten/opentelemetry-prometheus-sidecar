@@ -28,6 +28,7 @@ import (
 	"github.com/prometheus/prometheus/pkg/labels"
 	"github.com/prometheus/prometheus/pkg/textparse"
 	"github.com/prometheus/prometheus/tsdb/record"
+	"go.opentelemetry.io/otel/label"
 
 	common_pb "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/common/v1"
 	metric_pb "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/metrics/v1"
@@ -58,24 +59,24 @@ type sampleBuilder struct {
 // nil timeseries and a nil error.  These are observable as the difference between
 // "processed" and "produced" in the calling code (see manager.go).  TODO: Add
 // a label to identify each of the paths below.
-func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*metric_pb.ResourceMetrics, uint64, []record.RefSample, error) {
+func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*metric_pb.ResourceMetrics, []record.RefSample, error) {
 	sample := samples[0]
 	tailSamples := samples[1:]
 
 	if math.IsNaN(sample.V) {
-		return nil, 0, tailSamples, nil
+		return nil, tailSamples, nil
 	}
 
-	entry, ok, err := b.series.get(ctx, sample.Ref)
+	entry, ok, err := b.series.get(ctx, walRef(sample.Ref))
 	if err != nil {
-		return nil, 0, samples, errors.Wrap(err, "get series information")
+		return nil, samples, errors.Wrap(err, "get series information")
 	}
 	if !ok {
-		return nil, 0, tailSamples, nil
+		return nil, tailSamples, nil
 	}
 
 	if !entry.exported {
-		return nil, 0, tailSamples, nil
+		return nil, tailSamples, nil
 	}
 	// Allocate the proto and fill in its metadata.
 	//
@@ -93,9 +94,9 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 	switch entry.metadata.MetricType {
 	case textparse.MetricTypeCounter:
 		var value float64
-		resetTimestamp, value, ok = b.series.getResetAdjusted(sample.Ref, sample.T, sample.V)
+		resetTimestamp, value, ok = b.series.getResetAdjusted(walRef(sample.Ref), sample.T, sample.V)
 		if !ok {
-			return nil, 0, tailSamples, nil
+			return nil, tailSamples, nil
 		}
 
 		if entry.metadata.ValueType == metadata.INT64 {
@@ -123,18 +124,18 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 		switch entry.suffix {
 		case metricSuffixSum:
 			var value float64
-			resetTimestamp, value, ok = b.series.getResetAdjusted(sample.Ref, sample.T, sample.V)
+			resetTimestamp, value, ok = b.series.getResetAdjusted(walRef(sample.Ref), sample.T, sample.V)
 			if !ok {
-				return nil, 0, tailSamples, nil
+				return nil, tailSamples, nil
 			}
 			point.Data = &metric_pb.Metric_DoubleSum{
 				DoubleSum: monotonicDoublePoint(labels, resetTimestamp, sample.T, value),
 			}
 		case metricSuffixCount:
 			var value float64
-			resetTimestamp, value, ok = b.series.getResetAdjusted(sample.Ref, sample.T, sample.V)
+			resetTimestamp, value, ok = b.series.getResetAdjusted(walRef(sample.Ref), sample.T, sample.V)
 			if !ok {
-				return nil, 0, tailSamples, nil
+				return nil, tailSamples, nil
 			}
 			point.Data = &metric_pb.Metric_IntSum{
 				IntSum: monotonicIntegerPoint(labels, resetTimestamp, sample.T, value),
@@ -144,7 +145,7 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 				DoubleGauge: doubleGauge(labels, sample.T, sample.V),
 			}
 		default:
-			return nil, 0, tailSamples, errors.Errorf("unexpected metric name suffix %q", entry.suffix)
+			return nil, tailSamples, errors.Errorf("unexpected metric name suffix %q", entry.suffix)
 		}
 
 	case textparse.MetricTypeHistogram:
@@ -154,7 +155,7 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 		var value *metric_pb.DoubleHistogramDataPoint
 		value, resetTimestamp, tailSamples, err = b.buildHistogram(ctx, entry.metadata.Metric, entry.lset, samples)
 		if value == nil || err != nil {
-			return nil, 0, tailSamples, err
+			return nil, tailSamples, err
 		}
 
 		value.Labels = labels
@@ -173,52 +174,52 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 		}
 
 	default:
-		return nil, 0, samples[1:], errors.Errorf("unexpected metric type %s", entry.metadata.MetricType)
+		return nil, samples[1:], errors.Errorf("unexpected metric type %s", entry.metadata.MetricType)
 	}
 
-	if !b.series.updateSampleInterval(entry.hash, resetTimestamp, sample.T) {
-		return nil, 0, tailSamples, nil
+	if !b.series.updateSampleInterval(entry.key(), resetTimestamp, sample.T) {
+		return nil, tailSamples, nil
 	}
 	if b.maxPointAge > 0 {
 		when := time.Unix(sample.T/1000, int64(time.Duration(sample.T%1000)*time.Millisecond))
 		if time.Since(when) > b.maxPointAge {
-			return nil, 0, tailSamples, nil
+			return nil, tailSamples, nil
 		}
 	}
 
-	return ts, entry.hash, tailSamples, nil
+	return ts, tailSamples, nil
 }
 
-func protoLabel(l labels.Label) *common_pb.KeyValue {
+func protoLabel(l label.KeyValue) *common_pb.KeyValue {
 	return &common_pb.KeyValue{
-		Key: l.Name,
+		Key: string(l.Key),
 		Value: &common_pb.AnyValue{
 			Value: &common_pb.AnyValue_StringValue{
-				StringValue: l.Value,
+				StringValue: l.Value.Emit(),
 			},
 		},
 	}
 }
 
-func protoStringLabel(l labels.Label) *common_pb.StringKeyValue {
+func protoStringLabel(l label.KeyValue) *common_pb.StringKeyValue {
 	return &common_pb.StringKeyValue{
-		Key:   l.Name,
-		Value: l.Value,
+		Key:   string(l.Key),
+		Value: l.Value.Emit(),
 	}
 }
 
-func protoResourceAttributes(labels labels.Labels) []*common_pb.KeyValue {
-	ret := make([]*common_pb.KeyValue, len(labels))
-	for i := range labels {
-		ret[i] = protoLabel(labels[i])
+func protoResourceAttributes(labels *label.Set) []*common_pb.KeyValue {
+	ret := make([]*common_pb.KeyValue, 0, labels.Len())
+	for iter := labels.Iter(); iter.Next(); {
+		ret = append(ret, protoLabel(iter.Label()))
 	}
 	return ret
 }
 
-func protoStringLabels(labels labels.Labels) []*common_pb.StringKeyValue {
-	ret := make([]*common_pb.StringKeyValue, len(labels))
-	for i := range labels {
-		ret[i] = protoStringLabel(labels[i])
+func protoStringLabels(labels *label.Set) []*common_pb.StringKeyValue {
+	ret := make([]*common_pb.StringKeyValue, 0, labels.Len())
+	for iter := labels.Iter(); iter.Next(); {
+		ret = append(ret, protoStringLabel(iter.Label()))
 	}
 	return ret
 }
@@ -319,7 +320,7 @@ func (b *sampleBuilder) buildHistogram(
 	// until we hit a new metric.
 Loop:
 	for i, s := range samples {
-		e, ok, err := b.series.get(ctx, s.Ref)
+		e, ok, err := b.series.get(ctx, walRef(s.Ref))
 		if err != nil {
 			return nil, 0, samples, err
 		}
@@ -344,7 +345,7 @@ Loop:
 		}
 		lastTimestamp = s.T
 
-		rt, v, ok := b.series.getResetAdjusted(s.Ref, s.T, s.V)
+		rt, v, ok := b.series.getResetAdjusted(walRef(s.Ref), s.T, s.V)
 
 		switch name[len(baseName):] {
 		case metricSuffixSum:

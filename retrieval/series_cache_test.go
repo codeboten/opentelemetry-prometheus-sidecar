@@ -72,7 +72,7 @@ func TestScrapeCache_GarbageCollect(t *testing.T) {
 
 	// We should be able to read them all.
 	for i := 1; i <= 7; i++ {
-		entry, ok, err := c.get(ctx, uint64(i))
+		entry, ok, err := c.get(ctx, walRef(i))
 		if err != nil {
 			t.Fatalf("unexpected error: %s", err)
 		}
@@ -111,7 +111,7 @@ func TestScrapeCache_GarbageCollect(t *testing.T) {
 			t.Fatal(err)
 		}
 		for i := 1; i < 2; i++ {
-			if entry, ok, err := c.get(ctx, uint64(i)); err != nil {
+			if entry, ok, err := c.get(ctx, walRef(i)); err != nil {
 				t.Fatalf("unexpected error: %s", err)
 			} else if ok {
 				t.Fatalf("unexpected cache entry %d: %s", i, entry.lset)
@@ -119,7 +119,7 @@ func TestScrapeCache_GarbageCollect(t *testing.T) {
 		}
 		// We should be able to read them all.
 		for i := 3; i <= 7; i++ {
-			entry, ok, err := c.get(ctx, uint64(i))
+			entry, ok, err := c.get(ctx, walRef(i))
 			if err != nil {
 				t.Fatalf("unexpected error: %s", err)
 			}
@@ -159,14 +159,14 @@ func TestScrapeCache_GarbageCollect(t *testing.T) {
 	//  Only series 4 and 7 should be left.
 	for i := 1; i <= 7; i++ {
 		if i != 4 && i != 7 {
-			if entry, ok, err := c.get(ctx, uint64(i)); err != nil {
+			if entry, ok, err := c.get(ctx, walRef(i)); err != nil {
 				t.Fatalf("unexpected error: %s", err)
 			} else if ok {
 				t.Fatalf("unexpected cache entry %d: %s", i, entry.lset)
 			}
 			continue
 		}
-		entry, ok, err := c.get(ctx, uint64(i))
+		entry, ok, err := c.get(ctx, walRef(i))
 		if err != nil {
 			t.Fatalf("unexpected error: %s", err)
 		}
@@ -315,11 +315,11 @@ func TestSeriesCache_Filter(t *testing.T) {
 		labels.FromStrings("__name__", "metric1", "job", "job1", "instance", "inst1", "c", "c1"),
 	}
 	for idx, lset := range lsets {
-		err := c.set(ctx, uint64(idx), lset, 1)
+		err := c.set(ctx, walRef(idx), lset, 1)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, ok, err := c.get(ctx, uint64(idx)); !ok || err != nil {
+		if _, ok, err := c.get(ctx, walRef(idx)); !ok || err != nil {
 			t.Fatalf("metric not found: %s", err)
 		}
 	}

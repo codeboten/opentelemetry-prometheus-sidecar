@@ -31,6 +31,7 @@ import (
 	"github.com/prometheus/prometheus/pkg/textparse"
 	"github.com/prometheus/prometheus/tsdb/record"
 	"github.com/prometheus/prometheus/tsdb/wal"
+	"go.opentelemetry.io/otel/label"
 )
 
 type nopAppender struct {
@@ -225,38 +226,44 @@ func TestReader_ProgressFile(t *testing.T) {
 	}
 }
 
+func labelsFromStrings(kvs ...string) *label.Set {
+	return copyLabels(labels.FromStrings(kvs...))
+}
+
 func TestHashSeries(t *testing.T) {
-	a := tsDesc{
-		Name:     "mtype1",
-		Labels:   labels.Labels{{"l3", "l3"}, {"l4", "l4"}},
-		Resource: labels.Labels{{"l1", "l1"}, {"l2", "l2"}},
+	a := &seriesCacheEntry{
+		desc: &tsDesc{
+			Name:     "mtype1",
+			Labels:   labelsFromStrings("l3", "l3", "l4", "l4"),
+			Resource: labelsFromStrings("l1", "l1", "l2", "l2"),
+		},
 	}
 	// Hash a many times and ensure the hash doesn't change. This checks that we don't produce different
 	// hashes by unordered map iteration.
-	hash := hashSeries(a)
+	origKey := a.key()
 	for i := 0; i < 1000; i++ {
-		if hashSeries(a) != hash {
-			t.Fatalf("hash changed for same series")
+		if a.key() != origKey {
+			t.Fatalf("key changed for same series")
 		}
 	}
 	for _, b := range []tsDesc{
 		{
 			Name:     "mtype2",
-			Labels:   labels.Labels{{"l3", "l3"}, {"l4", "l4"}},
-			Resource: labels.Labels{{"l1", "l1"}, {"l2", "l2"}},
+			Labels:   labelsFromStrings("l3", "l3", "l4", "l4"),
+			Resource: labelsFromStrings("l1", "l1", "l2", "l2"),
 		},
 		{
 			Name:     "mtype1",
-			Labels:   labels.Labels{{"l3", "l3"}, {"l4", "l4"}},
-			Resource: labels.Labels{{"l1", "l1"}, {"l2", "l2-"}},
+			Labels:   labelsFromStrings("l3", "l3", "l4", "l4"),
+			Resource: labelsFromStrings("l1", "l1", "l2", "l2-"),
 		},
 		{
 			Name:     "mtype1",
-			Labels:   labels.Labels{{"l3", "l3-"}, {"l4", "l4"}},
-			Resource: labels.Labels{{"l1", "l1"}, {"l2", "l2"}},
+			Labels:   labelsFromStrings("l3", "l3-", "l4", "l4"),
+			Resource: labelsFromStrings("l1", "l1", "l2", "l2"),
 		},
 	} {
-		if hashSeries(b) == hash {
+		if (&seriesCacheEntry{desc: &b}).key() == origKey {
 			t.Fatalf("hash for different series did not change")
 		}
 	}

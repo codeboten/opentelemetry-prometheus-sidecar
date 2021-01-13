@@ -30,6 +30,7 @@ import (
 	"github.com/prometheus/prometheus/pkg/labels"
 	"github.com/prometheus/prometheus/pkg/textparse"
 	"github.com/prometheus/prometheus/tsdb/record"
+	"go.opentelemetry.io/otel/label"
 	messagediff "gopkg.in/d4l3k/messagediff.v1"
 )
 
@@ -40,8 +41,10 @@ type seriesMap map[uint64]labels.Labels
 // It never returns an error.
 type targetMap map[string]targets.Target
 
-func (g targetMap) Get(ctx context.Context, lset labels.Labels) (targets.Target, error) {
-	key := lset.Get("job") + "/" + lset.Get("instance")
+func (g targetMap) Get(ctx context.Context, lset *label.Set) (targets.Target, error) {
+	job, _ := lset.Value("job")
+	instance, _ := lset.Value("instance")
+	key := job.AsString() + "/" + instance.AsString()
 	return g[key], nil
 }
 
@@ -823,13 +826,13 @@ func TestSampleBuilder(t *testing.T) {
 
 				series := newSeriesCache(nil, "", nil, nil, c.targets, c.metadata, c.metricsPrefix)
 				for ref, s := range c.series {
-					series.set(ctx, ref, s, 0)
+					series.set(ctx, walRef(ref), s, 0)
 				}
 
 				b := &sampleBuilder{series: series}
 
 				for k := 0; len(c.input) > 0; k++ {
-					s, _, c.input, err = b.next(context.Background(), c.input)
+					s, c.input, err = b.next(context.Background(), c.input)
 					if err != nil {
 						break
 					}
