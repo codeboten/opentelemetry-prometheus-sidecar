@@ -54,6 +54,10 @@ func (a *nopAppender) getSamples() []*metric_pb.ResourceMetrics {
 }
 
 func TestReader_Progress(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
+
 	dir, err := ioutil.TempDir("", "progress")
 	if err != nil {
 		t.Fatal(err)

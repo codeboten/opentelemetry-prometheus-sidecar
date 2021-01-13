@@ -29,6 +29,10 @@ import (
 )
 
 func TestTailFuzz(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
+
 	dir, err := ioutil.TempDir("", "test_tail")
 	if err != nil {
 		t.Fatal(err)

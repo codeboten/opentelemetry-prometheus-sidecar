@@ -451,6 +451,10 @@ func TestRecoverable(t *testing.T) {
 }
 
 func TestSpawnNotMoreThanMaxConcurrentSendsGoroutines(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
+
 	dir, err := ioutil.TempDir("", "test")
 	if err != nil {
 		t.Fatal(err)

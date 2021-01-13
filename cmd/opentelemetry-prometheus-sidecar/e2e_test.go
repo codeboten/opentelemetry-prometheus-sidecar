@@ -90,6 +90,10 @@ scrape_configs:
 )
 
 func TestE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping test in short mode.")
+	}
+
 	// Pipe for readiness check
 	pipeRead, pipeWrite := io.Pipe()
 	ready := make(chan struct{})
