@@ -86,13 +86,13 @@ func TestReader_Progress(t *testing.T) {
 
 	// Populate the getters with data.
 	targetMap := targetMap{
-		"job1/inst1": &targets.Target{
-			Labels: labels.FromStrings("job", "job1", "instance", "inst1"),
-			DiscoveredLabels: labels.FromStrings(
+		"job1/inst1": targets.Make(
+			labels.FromStrings("job", "job1", "instance", "inst1"),
+			labels.FromStrings(
 				"project_id", "proj1",
 				"namespace", "ns1", "location", "loc1",
 				"job", "job1", "__address__", "inst1"),
-		},
+		),
 	}
 	metadataMap := metadataMap{
 		"job1/inst1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeGauge, Help: "help"},

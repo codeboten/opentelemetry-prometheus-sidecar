@@ -53,7 +53,7 @@ func TestScrapeCache_GarbageCollect(t *testing.T) {
 	}()
 	logger := log.NewLogfmtLogger(logBuffer)
 	c := newSeriesCache(logger, dir, nil, nil,
-		targetMap{"/": &targets.Target{}},
+		targetMap{"/": targets.Make(nil, nil)},
 		metadataMap{"//": &metadata.Entry{MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE}},
 		"",
 	)
@@ -221,10 +221,10 @@ func TestSeriesCache_Refresh(t *testing.T) {
 	}
 
 	// Populate the getters with data.
-	targetMap["job1/inst1"] = &targets.Target{
-		Labels:           labels.FromStrings("job", "job1", "instance", "inst1"),
-		DiscoveredLabels: labels.FromStrings("__resource_a", "resource2_a"),
-	}
+	targetMap["job1/inst1"] = targets.Make(
+		           labels.FromStrings("job", "job1", "instance", "inst1"),
+		 labels.FromStrings("__resource_a", "resource2_a"),
+	)
 	metadataMap["job1/inst1/metric1"] = &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE}
 
 	// Hack the timestamp of the last update to be sufficiently in the past that a refresh
@@ -250,10 +250,10 @@ func TestSeriesCache_RefreshMetadataNotFound(t *testing.T) {
 	}()
 	logger := log.NewLogfmtLogger(logBuffer)
 	targetMap := targetMap{
-		"job1/inst1": &targets.Target{
-			Labels:           labels.FromStrings("job", "job1", "instance", "inst1"),
-			DiscoveredLabels: labels.FromStrings("__resource_a", "resource2_a"),
-		},
+		"job1/inst1": targets.Make(
+			           labels.FromStrings("job", "job1", "instance", "inst1"),
+			 labels.FromStrings("__resource_a", "resource2_a"),
+		),
 	}
 	metadataMap := metadataMap{}
 	c := newSeriesCache(logger, "", nil, nil, targetMap, metadataMap, "")
@@ -283,10 +283,10 @@ func TestSeriesCache_RefreshMetadataNotFound(t *testing.T) {
 func TestSeriesCache_Filter(t *testing.T) {
 	// Populate the getters with data.
 	targetMap := targetMap{
-		"job1/inst1": &targets.Target{
-			Labels:           labels.FromStrings("job", "job1", "instance", "inst1"),
-			DiscoveredLabels: labels.FromStrings("__resource_a", "resource2_a"),
-		},
+		"job1/inst1": targets.Make(
+			           labels.FromStrings("job", "job1", "instance", "inst1"),
+			 labels.FromStrings("__resource_a", "resource2_a"),
+		),
 	}
 	metadataMap := metadataMap{
 		"job1/inst1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
@@ -338,10 +338,10 @@ func TestSeriesCache_Filter(t *testing.T) {
 func TestSeriesCache_RenameMetric(t *testing.T) {
 	// Populate the getters with data.
 	targetMap := targetMap{
-		"job1/inst1": &targets.Target{
-			Labels:           labels.FromStrings("job", "job1", "instance", "inst1"),
-			DiscoveredLabels: labels.FromStrings("__resource_a", "resource2_a"),
-		},
+		"job1/inst1": targets.Make(
+			           labels.FromStrings("job", "job1", "instance", "inst1"),
+			 labels.FromStrings("__resource_a", "resource2_a"),
+		),
 	}
 	metadataMap := metadataMap{
 		"job1/inst1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},

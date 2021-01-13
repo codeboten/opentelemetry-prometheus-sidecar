@@ -349,7 +349,7 @@ func (c *seriesCache) refresh(ctx context.Context, ref uint64) error {
 	}
 
 	// Remove target.Labels, which are redundant with Resource.
-	entryLabels = targets.DropTargetLabels(entryLabels, target.Labels)
+	entryLabels = targets.DropTargetLabels(entryLabels, target.Labels())
 	var (
 		metricName     = entry.lset.Get("__name__")
 		baseMetricName string
@@ -392,7 +392,7 @@ func (c *seriesCache) refresh(ctx context.Context, ref uint64) error {
 	ts := tsDesc{
 		Name:     c.getMetricName(c.metricsPrefix, metricName),
 		Labels:   entryLabels,
-		Resource: target.DiscoveredLabels, // Note: pre-sorted
+		Resource: target.DiscoveredLabels(), // Note: pre-sorted
 	}
 	sort.Sort(&ts.Labels)
 

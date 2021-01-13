@@ -35,8 +35,13 @@ func cacheKey(job, instance string) string {
 	return job + "\xff" + instance
 }
 
+type Target interface {
+	Labels() labels.Labels
+	DiscoveredLabels() labels.Labels
+}
+
 type Getter interface {
-	Get(ctx context.Context, lset labels.Labels) (*Target, error)
+	Get(ctx context.Context, lset labels.Labels) (Target, error)
 }
 
 // Cache retrieves target information from the Prometheus API and caches it.
@@ -44,7 +49,6 @@ type Getter interface {
 // unique by job and instance label and an optional but consistent set of additional labels.
 // It only provides best effort matching for configurations where targets are identified
 // by a varying set of labels within a job and instance combination.
-// Implements TargetGetter.
 type Cache struct {
 	logger        log.Logger
 	client        *http.Client
@@ -54,7 +58,7 @@ type Cache struct {
 
 	mtx sync.RWMutex
 	// Targets indexed by job/instance combination.
-	targets map[string][]*Target
+	targets map[string][]*targetEntry
 }
 
 var _ Getter = &Cache{}
@@ -72,7 +76,7 @@ func NewCache(logger log.Logger, client *http.Client, promURL *url.URL, extraLab
 		url:           promURL,
 		extraLabels:   extraLabels,
 		useMetaLabels: useMetaLabels,
-		targets:       map[string][]*Target{},
+		targets:       map[string][]*targetEntry{},
 	}
 }
 
@@ -115,7 +119,7 @@ func (c *Cache) refresh(ctx context.Context) error {
 		return errors.Wrap(errors.New(apiResp.Error), "request failed")
 	}
 
-	repl := make(map[string][]*Target, len(c.targets))
+	repl := make(map[string][]*targetEntry, len(c.targets))
 
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
@@ -158,7 +162,7 @@ func (c *Cache) refresh(ctx context.Context) error {
 // is generally a non-issue if the additional label keys are consistently set across all targets
 // for the job/instance combination.
 // If no target is found, nil is returned.
-func (c *Cache) Get(ctx context.Context, lset labels.Labels) (*Target, error) {
+func (c *Cache) Get(ctx context.Context, lset labels.Labels) (Target, error) {
 	key := cacheKey(lset.Get("job"), lset.Get("instance"))
 
 	c.mtx.RLock()
@@ -231,13 +235,13 @@ func (c *Cache) Get(ctx context.Context, lset labels.Labels) (*Target, error) {
 	}
 	t.DiscoveredLabels = t.DiscoveredLabels[:o]
 
-	return t, nil
+	return targetWrapper{t}, nil
 }
 
 // targetMatch returns the first target in the entry that matches all labels of the input
 // set iff it has them set.
 // This way metric labels are skipped while consistent target labels are considered.
-func targetMatch(targets []*Target, lset labels.Labels) (*Target, bool) {
+func targetMatch(targets []*targetEntry, lset labels.Labels) (*targetEntry, bool) {
 Outer:
 	for _, t := range targets {
 		for _, tl := range t.Labels {
@@ -253,15 +257,38 @@ Outer:
 type apiResponse struct {
 	Status string `json:"status"`
 	Data   struct {
-		ActiveTargets []*Target `json:"activeTargets"`
+		ActiveTargets []*targetEntry `json:"activeTargets"`
 	} `json:"data"`
 	Error     string `json:"error"`
 	ErrorType string `json:"errorType"`
 }
 
-type Target struct {
+type targetEntry struct {
 	Labels           labels.Labels `json:"labels"`
 	DiscoveredLabels labels.Labels `json:"discoveredLabels"`
+}
+
+type targetWrapper struct {
+	target *targetEntry
+}
+
+var _ Target = &targetWrapper{}
+
+func (t targetWrapper) Labels() labels.Labels {
+	return t.target.Labels
+}
+
+func (t targetWrapper) DiscoveredLabels() labels.Labels {
+	return t.target.DiscoveredLabels
+}
+
+func Make(labels, discovered labels.Labels) Target {
+	return targetWrapper{
+		&targetEntry{
+			Labels:           labels,
+			DiscoveredLabels: discovered,
+		},
+	}
 }
 
 // DropTargetLabels drops labels from the series that are found in the target with

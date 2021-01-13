@@ -38,9 +38,9 @@ type seriesMap map[uint64]labels.Labels
 
 // targetMap implements a targets.Getter that indexes targets by job/instance combination.
 // It never returns an error.
-type targetMap map[string]*targets.Target
+type targetMap map[string]targets.Target
 
-func (g targetMap) Get(ctx context.Context, lset labels.Labels) (*targets.Target, error) {
+func (g targetMap) Get(ctx context.Context, lset labels.Labels) (targets.Target, error) {
 	key := lset.Get("job") + "/" + lset.Get("instance")
 	return g[key], nil
 }
@@ -230,14 +230,14 @@ func TestSampleBuilder(t *testing.T) {
 				9: labels.FromStrings("job", "job1", "instance", "instance1", "__name__", "metric6"),
 			},
 			targets: targetMap{
-				"job1/instance1": &targets.Target{
-					Labels:           labels.FromStrings("job", "job1", "instance", "instance1"),
-					DiscoveredLabels: labels.FromStrings("resource_a", "abc"),
-				},
-				"job2/instance1": &targets.Target{
-					Labels:           labels.FromStrings("job", "job2", "instance", "instance1"),
-					DiscoveredLabels: labels.FromStrings("unused", "xxx", "resource_a", "def"),
-				},
+				"job1/instance1": targets.Make(
+					labels.FromStrings("job", "job1", "instance", "instance1"),
+					labels.FromStrings("resource_a", "abc"),
+				),
+				"job2/instance1": targets.Make(
+					labels.FromStrings("job", "job2", "instance", "instance1"),
+					labels.FromStrings("unused", "xxx", "resource_a", "def"),
+				),
 			},
 			metadata: metadataMap{
 				// Gauge as double.
@@ -395,13 +395,14 @@ func TestSampleBuilder(t *testing.T) {
 		{
 			name: "absense of data",
 			targets: targetMap{
-				"job1/instance1": &targets.Target{
-					Labels:           labels.FromStrings("job", "job1", "instance", "instance1"),
-					DiscoveredLabels: labels.FromStrings("resource_a", "abc"),
-				},
-				"job1/instance_noresource": &targets.Target{
-					Labels: labels.FromStrings("job", "job1", "instance", "instance_noresource"),
-				},
+				"job1/instance1": targets.Make(
+					labels.FromStrings("job", "job1", "instance", "instance1"),
+					labels.FromStrings("resource_a", "abc"),
+				),
+				"job1/instance_noresource": targets.Make(
+					labels.FromStrings("job", "job1", "instance", "instance_noresource"),
+					nil,
+				),
 			},
 			metadata: metadataMap{
 				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
@@ -422,10 +423,10 @@ func TestSampleBuilder(t *testing.T) {
 		{
 			name: "summary",
 			targets: targetMap{
-				"job1/instance1": &targets.Target{
-					Labels:           labels.FromStrings("job", "job1", "instance", "instance1"),
-					DiscoveredLabels: labels.FromStrings("resource_a", "abc"),
-				},
+				"job1/instance1": targets.Make(
+					labels.FromStrings("job", "job1", "instance", "instance1"),
+					labels.FromStrings("resource_a", "abc"),
+				),
 			},
 			metadata: metadataMap{
 				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeSummary, ValueType: metadata.DOUBLE},
@@ -483,10 +484,10 @@ func TestSampleBuilder(t *testing.T) {
 		{
 			name: "histogram",
 			targets: targetMap{
-				"job1/instance1": &targets.Target{
-					Labels:           labels.FromStrings("job", "job1", "instance", "instance1"),
-					DiscoveredLabels: labels.FromStrings("resource_a", "abc"),
-				},
+				"job1/instance1": targets.Make(
+					labels.FromStrings("job", "job1", "instance", "instance1"),
+					labels.FromStrings("resource_a", "abc"),
+				),
 			},
 			metadata: metadataMap{
 				"job1/instance1/metric1":         &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeHistogram, ValueType: metadata.DOUBLE},
@@ -577,14 +578,14 @@ func TestSampleBuilder(t *testing.T) {
 			},
 			// Both instances map to the same monitored resource and will thus produce the same series.
 			targets: targetMap{
-				"job1/instance1": &targets.Target{
-					Labels:           labels.FromStrings("job", "job1", "instance", "instance1"),
-					DiscoveredLabels: labels.FromStrings("resource_a", "abc"),
-				},
-				"job1/instance2": &targets.Target{
-					Labels:           labels.FromStrings("job", "job1", "instance", "instance2"),
-					DiscoveredLabels: labels.FromStrings("resource_a", "abc"),
-				},
+				"job1/instance1": targets.Make(
+					labels.FromStrings("job", "job1", "instance", "instance1"),
+					labels.FromStrings("resource_a", "abc"),
+				),
+				"job1/instance2": targets.Make(
+					labels.FromStrings("job", "job1", "instance", "instance2"),
+					labels.FromStrings("resource_a", "abc"),
+				),
 			},
 			metadata: metadataMap{
 				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeCounter, ValueType: metadata.DOUBLE},
@@ -632,10 +633,10 @@ func TestSampleBuilder(t *testing.T) {
 				1: labels.FromStrings("job", "job1", "instance", "instance1", "a", "1", "__name__", "metric1"),
 			},
 			targets: targetMap{
-				"job1/instance1": &targets.Target{
-					Labels:           labels.FromStrings("job", "job1", "instance", "instance1"),
-					DiscoveredLabels: labels.FromStrings("resource_a", "abc"),
-				},
+				"job1/instance1": targets.Make(
+					labels.FromStrings("job", "job1", "instance", "instance1"),
+					labels.FromStrings("resource_a", "abc"),
+				),
 			},
 			metadata: metadataMap{
 				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
@@ -662,10 +663,10 @@ func TestSampleBuilder(t *testing.T) {
 				1: labels.FromStrings("job", "job1", "instance", "instance1", "a", "1", "__name__", "metric1_total"),
 			},
 			targets: targetMap{
-				"job1/instance1": &targets.Target{
-					Labels:           labels.FromStrings("job", "job1", "instance", "instance1"),
-					DiscoveredLabels: labels.FromStrings("resource_a", "abc"),
-				},
+				"job1/instance1": targets.Make(
+					labels.FromStrings("job", "job1", "instance", "instance1"),
+					labels.FromStrings("resource_a", "abc"),
+				),
 			},
 			metadata: metadataMap{
 				"job1/instance1/metric1_total": &metadata.Entry{Metric: "metric1_total", MetricType: textparse.MetricTypeCounter, ValueType: metadata.DOUBLE},
@@ -695,10 +696,10 @@ func TestSampleBuilder(t *testing.T) {
 				1: labels.FromStrings("job", "job1", "instance", "instance1", "a", "1", "__name__", "metric1_total"),
 			},
 			targets: targetMap{
-				"job1/instance1": &targets.Target{
-					Labels:           labels.FromStrings("job", "job1", "instance", "instance1"),
-					DiscoveredLabels: labels.FromStrings("resource_a", "abc"),
-				},
+				"job1/instance1": targets.Make(
+					labels.FromStrings("job", "job1", "instance", "instance1"),
+					labels.FromStrings("resource_a", "abc"),
+				),
 			},
 			metadata: metadataMap{
 				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeCounter, ValueType: metadata.DOUBLE},
@@ -728,10 +729,10 @@ func TestSampleBuilder(t *testing.T) {
 				1: labels.FromStrings("job", "job1", "instance", "instance1", "a", "1", "__name__", "metric1_total"),
 			},
 			targets: targetMap{
-				"job1/instance1": &targets.Target{
-					Labels:           labels.FromStrings("job", "job1", "instance", "instance1"),
-					DiscoveredLabels: labels.FromStrings("resource_a", "abc"),
-				},
+				"job1/instance1": targets.Make(
+					labels.FromStrings("job", "job1", "instance", "instance1"),
+					labels.FromStrings("resource_a", "abc"),
+				),
 			},
 			metadata: metadataMap{
 				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
@@ -752,10 +753,10 @@ func TestSampleBuilder(t *testing.T) {
 		// Samples with a NaN value should be dropped.
 		{
 			targets: targetMap{
-				"job1/instance1": &targets.Target{
-					Labels:           labels.FromStrings("job", "job1", "instance", "instance1"),
-					DiscoveredLabels: labels.FromStrings("resource_a", "abc"),
-				},
+				"job1/instance1": targets.Make(
+					labels.FromStrings("job", "job1", "instance", "instance1"),
+					labels.FromStrings("resource_a", "abc"),
+				),
 			},
 			series: seriesMap{
 				1: labels.FromStrings("job", "job1", "instance", "instance1", "__name__", "metric1_count"),
@@ -777,10 +778,10 @@ func TestSampleBuilder(t *testing.T) {
 		// Samples with a NaN value should be dropped.
 		{
 			targets: targetMap{
-				"job1/instance1": &targets.Target{
-					Labels:           labels.FromStrings("job", "job1", "instance", "instance1"),
-					DiscoveredLabels: labels.FromStrings("resource_a", "abc"),
-				},
+				"job1/instance1": targets.Make(
+					labels.FromStrings("job", "job1", "instance", "instance1"),
+					labels.FromStrings("resource_a", "abc"),
+				),
 			},
 			series: seriesMap{
 				1: labels.FromStrings("job", "job1", "instance", "instance1", "__name__", "metric1_count"),

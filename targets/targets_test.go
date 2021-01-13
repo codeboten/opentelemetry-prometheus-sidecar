@@ -41,11 +41,11 @@ func TestTargetCache_Error(t *testing.T) {
 	}
 	c := NewCache(nil, nil, u, nil, false)
 
-	expectedTarget := &Target{
+	expectedTarget := &targetEntry{
 		Labels: labels.FromStrings("job", "a", "instance", "c"),
 	}
 	// Initialize cache with expected target.
-	c.targets[cacheKey("a", "c")] = []*Target{expectedTarget}
+	c.targets[cacheKey("a", "c")] = []*targetEntry{expectedTarget}
 
 	for i, hf := range []http.HandlerFunc{
 		// Return HTTP error.
@@ -69,7 +69,7 @@ func TestTargetCache_Error(t *testing.T) {
 
 		target, err := c.Get(ctx, labels.FromStrings("job", "a", "instance", "b"))
 		if target != nil {
-			t.Fatalf("%d: unexpected target %s", i, target.Labels)
+			t.Fatalf("%d: unexpected target %s", i, target.Labels())
 		}
 		if err == nil {
 			t.Fatalf("%d: expected error but got none", i)
@@ -79,13 +79,13 @@ func TestTargetCache_Error(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%d: unexpected error: %s", i, err)
 		}
-		if !reflect.DeepEqual(target, expectedTarget) {
+		if !reflect.DeepEqual(target, targetWrapper{expectedTarget}) {
 			t.Fatalf("%d: unexepected target %s", i, target)
 		}
 	}
 }
 
-func cacheForHandlerFunc(t *testing.T, handlerP *func() []*Target, extra labels.Labels, useMeta bool) *Cache {
+func cacheForHandlerFunc(t *testing.T, handlerP *func() []*targetEntry, extra labels.Labels, useMeta bool) *Cache {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var resp apiResponse
 		resp.Status = "success"
@@ -103,12 +103,12 @@ func cacheForHandlerFunc(t *testing.T, handlerP *func() []*Target, extra labels.
 }
 
 func TestTargetCache_Success(t *testing.T) {
-	var handler func() []*Target
+	var handler func() []*targetEntry
 
 	c := cacheForHandlerFunc(t, &handler, nil, false)
 
-	handler = func() []*Target {
-		return []*Target{
+	handler = func() []*targetEntry {
+		return []*targetEntry{
 			{
 				Labels:           labels.FromStrings("job", "job1", "instance", "instance1"),
 				DiscoveredLabels: labels.FromStrings("__job", "job1", "__instance", "instance1", "something", "else"),
@@ -127,11 +127,11 @@ func TestTargetCache_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !labelsEqual(target1.Labels, labels.FromStrings("job", "job1", "instance", "instance1")) {
-		t.Fatalf("unexpected target labels %s", target1.Labels)
+	if !labelsEqual(target1.Labels(), labels.FromStrings("job", "job1", "instance", "instance1")) {
+		t.Fatalf("unexpected target labels %s", target1.Labels())
 	}
-	if !labelsEqual(target1.DiscoveredLabels, labels.FromStrings("instance", "instance1", "job", "job1", "something", "else")) {
-		t.Fatalf("unexpected discovered target labels %s", target1.DiscoveredLabels)
+	if !labelsEqual(target1.DiscoveredLabels(), labels.FromStrings("instance", "instance1", "job", "job1", "something", "else")) {
+		t.Fatalf("unexpected discovered target labels %s", target1.DiscoveredLabels())
 	}
 	// Get a non-existant target. The first time it should attempt a refresh.
 	target, err := c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "absent", "instance", "absent"))
@@ -139,7 +139,7 @@ func TestTargetCache_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 	if target != nil {
-		t.Fatalf("unexpected target %s", target.Labels)
+		t.Fatalf("unexpected target %s", target.Labels())
 	}
 	// The first target we queried should be the same heap object after refresh.
 	target, err = c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "job1", "instance", "instance1"))
@@ -150,7 +150,7 @@ func TestTargetCache_Success(t *testing.T) {
 		t.Fatalf("target was not the same heap object")
 	}
 
-	handler = func() []*Target {
+	handler = func() []*targetEntry {
 		t.Fatal("unexpected request")
 		return nil
 	}
@@ -160,7 +160,7 @@ func TestTargetCache_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 	if target != nil {
-		t.Fatalf("unexpected target %s", target.Labels)
+		t.Fatalf("unexpected target %s", target.Labels())
 	}
 	// Get targets that have been retrieved through a previous refresh.
 	// This must not trigger refreshs.
@@ -168,28 +168,28 @@ func TestTargetCache_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !labelsEqual(target.Labels, labels.FromStrings("job", "job1", "instance", "instance2")) {
-		t.Fatalf("unexpected target labels %s", target.Labels)
+	if !labelsEqual(target.Labels(), labels.FromStrings("job", "job1", "instance", "instance2")) {
+		t.Fatalf("unexpected target labels %s", target.Labels())
 	}
 	// Get the targets with the same job/instance but differing ports.
 	target, err = c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "job2", "instance", "instance1", "port", "port1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !labelsEqual(target.Labels, labels.FromStrings("job", "job2", "instance", "instance1", "port", "port1")) {
-		t.Fatalf("unexpected target labels %s", target.Labels)
+	if !labelsEqual(target.Labels(), labels.FromStrings("job", "job2", "instance", "instance1", "port", "port1")) {
+		t.Fatalf("unexpected target labels %s", target.Labels())
 	}
 	target, err = c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "job2", "instance", "instance1", "port", "port2"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !labelsEqual(target.Labels, labels.FromStrings("job", "job2", "instance", "instance1", "port", "port2")) {
-		t.Fatalf("unexpected target labels %s", target.Labels)
+	if !labelsEqual(target.Labels(), labels.FromStrings("job", "job2", "instance", "instance1", "port", "port2")) {
+		t.Fatalf("unexpected target labels %s", target.Labels())
 	}
 
 	// Set a new response, which should invalidate previous targets.
-	handler = func() []*Target {
-		return []*Target{
+	handler = func() []*targetEntry {
+		return []*targetEntry{
 			{Labels: labels.FromStrings("job", "job3", "instance", "instance1")},
 		}
 	}
@@ -197,8 +197,8 @@ func TestTargetCache_Success(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !labelsEqual(target.Labels, labels.FromStrings("job", "job3", "instance", "instance1")) {
-		t.Fatalf("unexpected target labels %s", target.Labels)
+	if !labelsEqual(target.Labels(), labels.FromStrings("job", "job3", "instance", "instance1")) {
+		t.Fatalf("unexpected target labels %s", target.Labels())
 	}
 	// Old targets should be gone.
 	target, err = c.Get(ctx, labels.FromStrings("__name__", "metric1", "job", "job1", "instance", "instance1"))
@@ -206,12 +206,12 @@ func TestTargetCache_Success(t *testing.T) {
 		t.Fatal(err)
 	}
 	if target != nil {
-		t.Fatalf("unexpected target %s", target.Labels)
+		t.Fatalf("unexpected target %s", target.Labels())
 	}
 }
 
 func TestTargetCache_EmptyEntry(t *testing.T) {
-	var handler func() []*Target
+	var handler func() []*targetEntry
 
 	c := cacheForHandlerFunc(t, &handler, nil, false)
 
@@ -219,8 +219,8 @@ func TestTargetCache_EmptyEntry(t *testing.T) {
 	c.targets[cacheKey("job1", "instance-not-exists")] = nil
 
 	// No target in initial response.
-	handler = func() []*Target {
-		return []*Target{}
+	handler = func() []*targetEntry {
+		return []*targetEntry{}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -248,8 +248,8 @@ func TestTargetCache_EmptyEntry(t *testing.T) {
 	}
 
 	// Add a new instance into response, which will trigger replacing cache.
-	handler = func() []*Target {
-		return []*Target{
+	handler = func() []*targetEntry {
+		return []*targetEntry{
 			{Labels: labels.FromStrings("job", "job1", "instance", "instance1")},
 		}
 	}
@@ -336,12 +336,12 @@ func TestLabelDiscovery(t *testing.T) {
 
 	for _, kase := range kases {
 		t.Run(kase.name, func(t *testing.T) {
-			var handler func() []*Target
+			var handler func() []*targetEntry
 
 			c := cacheForHandlerFunc(t, &handler, kase.extra, kase.useMeta)
 
-			handler = func() []*Target {
-				return []*Target{
+			handler = func() []*targetEntry {
+				return []*targetEntry{
 					{Labels: kase.ident, DiscoveredLabels: kase.disco},
 				}
 			}
@@ -360,11 +360,11 @@ func TestLabelDiscovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !labelsEqual(tgt.Labels, kase.ident) {
-				t.Fatalf("unexpected target labels %v != %v", tgt.Labels, kase.ident)
+			if !labelsEqual(tgt.Labels(), kase.ident) {
+				t.Fatalf("unexpected target labels %v != %v", tgt.Labels(), kase.ident)
 			}
-			if !labelsEqual(tgt.DiscoveredLabels, kase.expect) {
-				t.Fatalf("unexpected discovered target labels %v != %v", tgt.DiscoveredLabels, kase.expect)
+			if !labelsEqual(tgt.DiscoveredLabels(), kase.expect) {
+				t.Fatalf("unexpected discovered target labels %v != %v", tgt.DiscoveredLabels(), kase.expect)
 			}
 		})
 	}
