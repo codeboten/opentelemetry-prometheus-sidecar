@@ -46,10 +46,6 @@ var (
 	)
 )
 
-type TargetGetter interface {
-	Get(ctx context.Context, lset labels.Labels) (*targets.Target, error)
-}
-
 type MetadataGetter interface {
 	Get(ctx context.Context, job, instance, metric string) (*metadata.Entry, error)
 }
@@ -61,7 +57,7 @@ func NewPrometheusReader(
 	tailer *tail.Tailer,
 	filters [][]*labels.Matcher,
 	metricRenames map[string]string,
-	targetGetter TargetGetter,
+	targetGetter targets.Getter,
 	metadataGetter MetadataGetter,
 	appender Appender,
 	metricsPrefix string,
@@ -91,7 +87,7 @@ type PrometheusReader struct {
 	tailer               *tail.Tailer
 	filters              [][]*labels.Matcher
 	metricRenames        map[string]string
-	targetGetter         TargetGetter
+	targetGetter         targets.Getter
 	metadataGetter       MetadataGetter
 	appender             Appender
 	progressSaveInterval time.Duration

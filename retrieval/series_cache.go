@@ -78,7 +78,7 @@ type seriesCache struct {
 	logger        log.Logger
 	dir           string
 	filters       [][]*labels.Matcher
-	targets       TargetGetter
+	targets       targets.Getter
 	metaget       MetadataGetter
 	metricsPrefix string
 	renames       map[string]string
@@ -134,7 +134,7 @@ func newSeriesCache(
 	dir string,
 	filters [][]*labels.Matcher,
 	renames map[string]string,
-	targets TargetGetter,
+	targets targets.Getter,
 	metaget MetadataGetter,
 	metricsPrefix string,
 ) *seriesCache {

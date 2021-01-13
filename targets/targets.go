@@ -35,6 +35,10 @@ func cacheKey(job, instance string) string {
 	return job + "\xff" + instance
 }
 
+type Getter interface {
+	Get(ctx context.Context, lset labels.Labels) (*Target, error)
+}
+
 // Cache retrieves target information from the Prometheus API and caches it.
 // It works reliably and efficiently for configurations where targets are identified
 // unique by job and instance label and an optional but consistent set of additional labels.
@@ -52,6 +56,8 @@ type Cache struct {
 	// Targets indexed by job/instance combination.
 	targets map[string][]*Target
 }
+
+var _ Getter = &Cache{}
 
 func NewCache(logger log.Logger, client *http.Client, promURL *url.URL, extraLabels labels.Labels, useMetaLabels bool) *Cache {
 	if client == nil {

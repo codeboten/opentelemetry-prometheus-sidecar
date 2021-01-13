@@ -36,7 +36,7 @@ import (
 // seriesMap implements seriesGetter.
 type seriesMap map[uint64]labels.Labels
 
-// targetMap implements a TargetGetter that indexes targets by job/instance combination.
+// targetMap implements a targets.Getter that indexes targets by job/instance combination.
 // It never returns an error.
 type targetMap map[string]*targets.Target
 
@@ -207,7 +207,7 @@ func TestSampleBuilder(t *testing.T) {
 	cases := []struct {
 		name          string
 		series        seriesMap
-		targets       TargetGetter
+		targets       targets.Getter
 		metadata      MetadataGetter
 		metricsPrefix string
 		input         []record.RefSample
