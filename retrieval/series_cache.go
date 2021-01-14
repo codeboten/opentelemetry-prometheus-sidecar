@@ -26,6 +26,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/pkg/labels"
 	"github.com/prometheus/prometheus/pkg/textparse"
+	"github.com/prometheus/prometheus/pkg/timestamp"
 	"github.com/prometheus/prometheus/tsdb/record"
 	"github.com/prometheus/prometheus/tsdb/wal"
 	"go.opentelemetry.io/otel/label"
@@ -57,9 +58,6 @@ type tsDesc struct {
 	ValueType metadata.ValueType
 }
 
-// walRef are also called "series reference" or Ref in Prometheus data structs
-type walRef uint64
-
 type seriesKey struct {
 	name     string
 	labels   label.Distinct
@@ -72,11 +70,11 @@ type seriesGetter interface {
 
 	// Get the reset timestamp and adjusted value for the input sample.
 	// If false is returned, the sample should be skipped.
-	getResetAdjusted(ref walRef, t int64, v float64) (int64, float64, bool)
+	getResetAdjusted(ref walRef, t promTime, v float64) (promTime, float64, bool)
 
 	// Attempt to set the new most recent time range for the series with given hash.
 	// Returns false if it failed, in which case the sample must be discarded.
-	updateSampleInterval(key seriesKey, start, end int64) bool
+	updateSampleInterval(key seriesKey, start, end promTime) bool
 }
 
 // seriesCache holds a mapping from series reference to label set.
@@ -109,7 +107,7 @@ type seriesCacheEntry struct {
 
 	hasReset       bool
 	resetValue     float64
-	resetTimestamp int64
+	resetTimestamp promTime
 	// maxSegment indicates the maximum WAL segment index in which
 	// the series was first logged.
 	// By providing it as an upper bound, we can safely delete a series entry
@@ -142,6 +140,17 @@ func (e *seriesCacheEntry) key() seriesKey {
 		labels:   e.desc.Labels.Equivalent(),
 		resource: e.desc.Resource.Equivalent(),
 	}
+}
+
+// walRef are also called "series reference" or Ref in Prometheus data structs
+type walRef uint64
+
+// promTime refer to the prometheus standard timestamp, see helpers in
+// "github.com/prometheus/prometheus/pkg/timestamp".
+type promTime int64
+
+func (pt promTime) Time() time.Time {
+	return timestamp.Time(int64(pt))
 }
 
 func newSeriesCache(
@@ -266,7 +275,7 @@ func (c *seriesCache) get(ctx context.Context, ref walRef) (*seriesCacheEntry, b
 
 // updateSampleInterval attempts to set the new most recent time range for the series with given hash.
 // Returns false if it failed, in which case the sample must be discarded.
-func (c *seriesCache) updateSampleInterval(key seriesKey, start, end int64) bool {
+func (c *seriesCache) updateSampleInterval(key seriesKey, start, end promTime) bool {
 	iv, ok := c.intervals[key]
 	if !ok || iv.accepts(start, end) {
 		c.intervals[key] = sampleInterval{start, end}
@@ -276,17 +285,17 @@ func (c *seriesCache) updateSampleInterval(key seriesKey, start, end int64) bool
 }
 
 type sampleInterval struct {
-	start, end int64
+	start, end promTime
 }
 
-func (si *sampleInterval) accepts(start, end int64) bool {
+func (si *sampleInterval) accepts(start, end promTime) bool {
 	return (start == si.start && end > si.end) || (start > si.start && start >= si.end)
 }
 
 // getResetAdjusted takes a sample for a referenced series and returns
 // its reset timestamp and adjusted value.
 // If the last return argument is false, the sample should be dropped.
-func (c *seriesCache) getResetAdjusted(ref walRef, t int64, v float64) (int64, float64, bool) {
+func (c *seriesCache) getResetAdjusted(ref walRef, t promTime, v float64) (promTime, float64, bool) {
 	c.mtx.Lock()
 	e, ok := c.entries[ref]
 	c.mtx.Unlock()
@@ -381,6 +390,7 @@ func (c *seriesCache) refresh(ctx context.Context, ref walRef) error {
 		if meta == nil {
 			droppedSeriesMetadataNotFound.Add(ctx, 1)
 
+			// TODO: Make info?
 			level.Debug(c.logger).Log("msg", "metadata not found", "metric_name", metricName)
 			return nil
 		}

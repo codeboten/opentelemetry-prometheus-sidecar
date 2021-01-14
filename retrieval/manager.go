@@ -201,7 +201,7 @@ Outer:
 				if outputSample == nil {
 					continue
 				}
-				r.appender.Append(0 /* @@@ hash */, outputSample)
+				r.appender.Append(*outputSample)
 				produced++
 			}
 

@@ -15,36 +15,32 @@ package retrieval
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	sidecar "github.com/lightstep/opentelemetry-prometheus-sidecar"
 	"github.com/lightstep/opentelemetry-prometheus-sidecar/metadata"
 	"github.com/pkg/errors"
-	"github.com/prometheus/common/version"
 	"github.com/prometheus/prometheus/pkg/labels"
 	"github.com/prometheus/prometheus/pkg/textparse"
+	"github.com/prometheus/prometheus/pkg/timestamp"
 	"github.com/prometheus/prometheus/tsdb/record"
-	"go.opentelemetry.io/otel/label"
-
-	common_pb "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/common/v1"
-	metric_pb "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/metrics/v1"
-	resource_pb "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/resource/v1"
+	otelapi "go.opentelemetry.io/otel/metric"
+	"go.opentelemetry.io/otel/metric/number"
+	export "go.opentelemetry.io/otel/sdk/export/metric"
+	"go.opentelemetry.io/otel/sdk/export/metric/aggregation"
+	otelagg "go.opentelemetry.io/otel/sdk/export/metric/aggregation"
+	"go.opentelemetry.io/otel/sdk/resource"
 )
 
-const (
-	otlpCUMULATIVE = metric_pb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE
-)
-
-// Appender appends a time series with exactly one data point. A hash for the series
-// (but not the data point) must be provided.
+// Appender appends a time series with exactly one data point
 // The client may cache the computed hash more easily, which is why its part of the call
 // and not done by the Appender's implementation.
 type Appender interface {
-	Append(hash uint64, s *metric_pb.ResourceMetrics) error
+	Append(export.Record) error
 }
 
 type sampleBuilder struct {
@@ -59,11 +55,12 @@ type sampleBuilder struct {
 // nil timeseries and a nil error.  These are observable as the difference between
 // "processed" and "produced" in the calling code (see manager.go).  TODO: Add
 // a label to identify each of the paths below.
-func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*metric_pb.ResourceMetrics, []record.RefSample, error) {
+func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*export.Record, []record.RefSample, error) {
 	sample := samples[0]
 	tailSamples := samples[1:]
 
 	if math.IsNaN(sample.V) {
+		fmt.Println("NAN CASE") // TODO: Metric this case?
 		return nil, tailSamples, nil
 	}
 
@@ -72,78 +69,86 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 		return nil, samples, errors.Wrap(err, "get series information")
 	}
 	if !ok {
+		fmt.Println("!OK CASE") // TODO: Log this case?
 		return nil, tailSamples, nil
 	}
 
 	if !entry.exported {
+		fmt.Println("!EXPORTED CASE") // TODO: Debug-log this case?
 		return nil, tailSamples, nil
 	}
-	// Allocate the proto and fill in its metadata.
-	//
-	// TODO This code does not try to combine more than one point
-	// into a ResourceMetrics, which is possible here (or on the
-	// other side of the channel). The hope is
-	// to use an OTel-Go SDK metrics processor to implement this
-	// functionality, where the OTLP exporter already applies
-	// this.  Note: issue #44.
-	ts, point := protoTimeseries(entry.desc)
-	labels := protoStringLabels(entry.desc.Labels)
 
-	var resetTimestamp int64
+	var (
+		ikind     otelapi.InstrumentKind = -1 // Not used in all cases, indicates monotonic sum in some cases.
+		nkind     number.Kind            = -1
+		agg       otelagg.Aggregation
+		startTime promTime = 0
+		endTime   promTime = promTime(sample.T)
+	)
+
+	if entry.metadata.ValueType == metadata.INT64 {
+		nkind = number.Int64Kind
+	} else {
+		nkind = number.Float64Kind
+	}
 
 	switch entry.metadata.MetricType {
 	case textparse.MetricTypeCounter:
+		ikind = otelapi.CounterInstrumentKind
+
 		var value float64
-		resetTimestamp, value, ok = b.series.getResetAdjusted(walRef(sample.Ref), sample.T, sample.V)
+		startTime, value, ok = b.series.getResetAdjusted(walRef(sample.Ref), endTime, sample.V)
 		if !ok {
 			return nil, tailSamples, nil
 		}
 
 		if entry.metadata.ValueType == metadata.INT64 {
-			point.Data = &metric_pb.Metric_IntSum{
-				IntSum: monotonicIntegerPoint(labels, resetTimestamp, sample.T, value),
-			}
+			agg = numberSum(number.NewInt64Number(int64(value)))
 		} else {
-			point.Data = &metric_pb.Metric_DoubleSum{
-				DoubleSum: monotonicDoublePoint(labels, resetTimestamp, sample.T, value),
-			}
+			agg = numberSum(number.NewFloat64Number(value))
 		}
 
 	case textparse.MetricTypeGauge, textparse.MetricTypeUnknown:
+		ikind = otelapi.ValueRecorderInstrumentKind
+
 		if entry.metadata.ValueType == metadata.INT64 {
-			point.Data = &metric_pb.Metric_IntGauge{
-				IntGauge: intGauge(labels, sample.T, sample.V),
+			agg = numberLastValue{
+				V: number.NewInt64Number(int64(sample.V)),
+				T: timestamp.Time(sample.T),
 			}
 		} else {
-			point.Data = &metric_pb.Metric_DoubleGauge{
-				DoubleGauge: doubleGauge(labels, sample.T, sample.V),
+			agg = numberLastValue{
+				V: number.NewFloat64Number(sample.V),
+				T: timestamp.Time(sample.T),
 			}
 		}
 
 	case textparse.MetricTypeSummary:
+		nkind = number.Float64Kind
+
 		switch entry.suffix {
 		case metricSuffixSum:
+			ikind = otelapi.CounterInstrumentKind
+
 			var value float64
-			resetTimestamp, value, ok = b.series.getResetAdjusted(walRef(sample.Ref), sample.T, sample.V)
+			startTime, value, ok = b.series.getResetAdjusted(walRef(sample.Ref), endTime, sample.V)
 			if !ok {
 				return nil, tailSamples, nil
 			}
-			point.Data = &metric_pb.Metric_DoubleSum{
-				DoubleSum: monotonicDoublePoint(labels, resetTimestamp, sample.T, value),
-			}
+			agg = numberSum(number.NewFloat64Number(value))
 		case metricSuffixCount:
+			ikind = otelapi.CounterInstrumentKind
+
 			var value float64
-			resetTimestamp, value, ok = b.series.getResetAdjusted(walRef(sample.Ref), sample.T, sample.V)
+			startTime, value, ok = b.series.getResetAdjusted(walRef(sample.Ref), endTime, sample.V)
 			if !ok {
 				return nil, tailSamples, nil
 			}
-			point.Data = &metric_pb.Metric_IntSum{
-				IntSum: monotonicIntegerPoint(labels, resetTimestamp, sample.T, value),
-			}
+			agg = numberSum(number.NewFloat64Number(value))
 		case "": // Actual quantiles.
-			point.Data = &metric_pb.Metric_DoubleGauge{
-				DoubleGauge: doubleGauge(labels, sample.T, sample.V),
-			}
+			ikind = otelapi.ValueObserverInstrumentKind
+
+			agg = numberSum(number.NewFloat64Number(sample.V))
 		default:
 			return nil, tailSamples, errors.Errorf("unexpected metric name suffix %q", entry.suffix)
 		}
@@ -152,32 +157,20 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 		// We pass in the original lset for matching since Prometheus's target label must
 		// be the same as well.
 		// Note: Always using DoubleHistogram points, ignores entry.metadata.ValueType.
-		var value *metric_pb.DoubleHistogramDataPoint
-		value, resetTimestamp, tailSamples, err = b.buildHistogram(ctx, entry.metadata.Metric, entry.lset, samples)
-		if value == nil || err != nil {
+		agg, startTime, tailSamples, err = b.buildHistogram(ctx, entry.metadata.Metric, entry.lset, samples)
+		if agg == nil || err != nil {
+			if agg == nil && err == nil {
+				err = errors.Errorf("missing histogram points")
+			}
 			return nil, tailSamples, err
 		}
-
-		value.Labels = labels
-		value.StartTimeUnixNano = getNanos(resetTimestamp)
-		value.TimeUnixNano = getNanos(sample.T)
-
-		doubleHist := &metric_pb.DoubleHistogram{
-			AggregationTemporality: otlpCUMULATIVE,
-			DataPoints: []*metric_pb.DoubleHistogramDataPoint{
-				value,
-			},
-		}
-
-		point.Data = &metric_pb.Metric_DoubleHistogram{
-			DoubleHistogram: doubleHist,
-		}
+		ikind = otelapi.ValueRecorderInstrumentKind
 
 	default:
 		return nil, samples[1:], errors.Errorf("unexpected metric type %s", entry.metadata.MetricType)
 	}
 
-	if !b.series.updateSampleInterval(entry.key(), resetTimestamp, sample.T) {
+	if !b.series.updateSampleInterval(entry.key(), startTime, endTime) {
 		return nil, tailSamples, nil
 	}
 	if b.maxPointAge > 0 {
@@ -187,63 +180,15 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 		}
 	}
 
-	return ts, tailSamples, nil
-}
+	exportDesc := otelapi.NewDescriptor(entry.desc.Name, ikind, nkind)
 
-func protoLabel(l label.KeyValue) *common_pb.KeyValue {
-	return &common_pb.KeyValue{
-		Key: string(l.Key),
-		Value: &common_pb.AnyValue{
-			Value: &common_pb.AnyValue_StringValue{
-				StringValue: l.Value.Emit(),
-			},
-		},
-	}
-}
+	// Note: This ToSlice() is an unnecessary copy. TODO: Expose a
+	// *label.Set constructor in the SDK upstream?
+	res := resource.NewWithAttributes(entry.desc.Resource.ToSlice()...)
 
-func protoStringLabel(l label.KeyValue) *common_pb.StringKeyValue {
-	return &common_pb.StringKeyValue{
-		Key:   string(l.Key),
-		Value: l.Value.Emit(),
-	}
-}
+	ts := export.NewRecord(&exportDesc, entry.desc.Labels, res, agg, startTime.Time(), endTime.Time())
 
-func protoResourceAttributes(labels *label.Set) []*common_pb.KeyValue {
-	ret := make([]*common_pb.KeyValue, 0, labels.Len())
-	for iter := labels.Iter(); iter.Next(); {
-		ret = append(ret, protoLabel(iter.Label()))
-	}
-	return ret
-}
-
-func protoStringLabels(labels *label.Set) []*common_pb.StringKeyValue {
-	ret := make([]*common_pb.StringKeyValue, 0, labels.Len())
-	for iter := labels.Iter(); iter.Next(); {
-		ret = append(ret, protoStringLabel(iter.Label()))
-	}
-	return ret
-}
-
-func protoTimeseries(desc *tsDesc) (*metric_pb.ResourceMetrics, *metric_pb.Metric) {
-	metric := &metric_pb.Metric{
-		Name:        desc.Name,
-		Description: "", // TODO
-		Unit:        "", // TODO
-	}
-	return &metric_pb.ResourceMetrics{
-		Resource: &resource_pb.Resource{
-			Attributes: protoResourceAttributes(desc.Resource),
-		},
-		InstrumentationLibraryMetrics: []*metric_pb.InstrumentationLibraryMetrics{
-			&metric_pb.InstrumentationLibraryMetrics{
-				InstrumentationLibrary: &common_pb.InstrumentationLibrary{
-					Name:    sidecar.ExportInstrumentationLibrary,
-					Version: version.Version,
-				},
-				Metrics: []*metric_pb.Metric{metric},
-			},
-		},
-	}, metric
+	return &ts, tailSamples, nil
 }
 
 const (
@@ -276,11 +221,6 @@ func getMetricName(prefix string, promName string) string {
 	return prefix + promName
 }
 
-// getNanos converts a millisecond timestamp into a OTLP nanosecond timestamp.
-func getNanos(t int64) uint64 {
-	return uint64(time.Duration(t) * time.Millisecond / time.Nanosecond)
-}
-
 type distribution struct {
 	bounds []float64
 	values []uint64
@@ -307,12 +247,12 @@ func (b *sampleBuilder) buildHistogram(
 	baseName string,
 	matchLset labels.Labels,
 	samples []record.RefSample,
-) (*metric_pb.DoubleHistogramDataPoint, int64, []record.RefSample, error) {
+) (aggregation.Histogram, promTime, []record.RefSample, error) {
 	var (
 		consumed       int
 		count, sum     float64
-		resetTimestamp int64
-		lastTimestamp  int64
+		resetTimestamp promTime
+		lastTimestamp  promTime
 		dist           = distribution{bounds: make([]float64, 0, 20), values: make([]uint64, 0, 20)}
 		skip           = false
 	)
@@ -339,13 +279,14 @@ Loop:
 		// It could still happen with bad clients though and we are doing it in tests for simplicity.
 		// If we detect the same series as before but for a different timestamp, return the histogram up to this
 		// series and leave the duplicate time series untouched on the input.
-		if i > 0 && s.T != lastTimestamp {
+		sT := promTime(s.T)
+		if i > 0 && sT != lastTimestamp {
 			// TODO: counter
 			break
 		}
-		lastTimestamp = s.T
+		lastTimestamp = sT
 
-		rt, v, ok := b.series.getResetAdjusted(walRef(s.Ref), s.T, s.V)
+		rt, v, ok := b.series.getResetAdjusted(walRef(s.Ref), sT, s.V)
 
 		switch name[len(baseName):] {
 		case metricSuffixSum:
@@ -402,11 +343,17 @@ Loop:
 	if len(dist.bounds) > 0 {
 		bounds = dist.bounds[:len(dist.bounds)-1]
 	}
-	histogram := &metric_pb.DoubleHistogramDataPoint{
-		Count:          uint64(count),
-		Sum:            sum,
-		BucketCounts:   values,
-		ExplicitBounds: bounds,
+	// Note: The []uint64 to []float64 and uint64 to int64 below
+	// will disappear in OTel-Go v0.16.0.
+	asFloats := make([]float64, len(values))
+	for i := range values {
+		asFloats[i] = float64(values[i])
+	}
+	histogram := float64Histogram{
+		sum:    sum,
+		count:  int64(count),
+		bounds: bounds,
+		values: asFloats,
 	}
 	return histogram, resetTimestamp, samples[consumed:], nil
 }
@@ -449,52 +396,57 @@ func histogramLabelsEqual(a, b labels.Labels) bool {
 	return i == len(a) && j == len(b)
 }
 
-func monotonicIntegerPoint(labels []*common_pb.StringKeyValue, start, end int64, value float64) *metric_pb.IntSum {
-	integer := &metric_pb.IntDataPoint{
-		Labels:            labels,
-		StartTimeUnixNano: getNanos(start),
-		TimeUnixNano:      getNanos(end),
-		Value:             int64(value + 0.5),
-	}
-	return &metric_pb.IntSum{
-		IsMonotonic:            true,
-		AggregationTemporality: otlpCUMULATIVE,
-		DataPoints:             []*metric_pb.IntDataPoint{integer},
-	}
+type numberSum number.Number
+
+var _ otelagg.Sum = numberSum(0)
+
+func (s numberSum) Kind() otelagg.Kind {
+	return otelagg.SumKind
 }
 
-func monotonicDoublePoint(labels []*common_pb.StringKeyValue, start, end int64, value float64) *metric_pb.DoubleSum {
-	double := &metric_pb.DoubleDataPoint{
-		Labels:            labels,
-		StartTimeUnixNano: getNanos(start),
-		TimeUnixNano:      getNanos(end),
-		Value:             value,
-	}
-	return &metric_pb.DoubleSum{
-		IsMonotonic:            true,
-		AggregationTemporality: otlpCUMULATIVE,
-		DataPoints:             []*metric_pb.DoubleDataPoint{double},
-	}
+func (s numberSum) Sum() (number.Number, error) {
+	return number.Number(s), nil
 }
 
-func intGauge(labels []*common_pb.StringKeyValue, ts int64, value float64) *metric_pb.IntGauge {
-	integer := &metric_pb.IntDataPoint{
-		Labels:       labels,
-		TimeUnixNano: getNanos(ts),
-		Value:        int64(value + 0.5),
-	}
-	return &metric_pb.IntGauge{
-		DataPoints: []*metric_pb.IntDataPoint{integer},
-	}
+type numberLastValue struct {
+	V number.Number
+	T time.Time
 }
 
-func doubleGauge(labels []*common_pb.StringKeyValue, ts int64, value float64) *metric_pb.DoubleGauge {
-	double := &metric_pb.DoubleDataPoint{
-		Labels:       labels,
-		TimeUnixNano: getNanos(ts),
-		Value:        value,
-	}
-	return &metric_pb.DoubleGauge{
-		DataPoints: []*metric_pb.DoubleDataPoint{double},
-	}
+var _ otelagg.LastValue = numberLastValue{}
+
+func (lv numberLastValue) Kind() otelagg.Kind {
+	return otelagg.LastValueKind
+}
+
+func (lv numberLastValue) LastValue() (number.Number, time.Time, error) {
+	return lv.V, lv.T, nil
+}
+
+type float64Histogram struct {
+	count  int64
+	sum    float64
+	values []float64
+	bounds []float64
+}
+
+var _ otelagg.Histogram = float64Histogram{}
+
+func (h float64Histogram) Kind() otelagg.Kind {
+	return otelagg.HistogramKind
+}
+
+func (h float64Histogram) Count() (int64, error) {
+	return h.count, nil
+}
+
+func (h float64Histogram) Sum() (number.Number, error) {
+	return number.NewFloat64Number(h.sum), nil
+}
+
+func (h float64Histogram) Histogram() (aggregation.Buckets, error) {
+	return aggregation.Buckets{
+		Boundaries: h.bounds,
+		Counts:     h.values,
+	}, nil
 }
