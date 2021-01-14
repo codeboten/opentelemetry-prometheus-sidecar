@@ -20,18 +20,17 @@ import (
 	"testing"
 	"time"
 
-	sidecar "github.com/lightstep/opentelemetry-prometheus-sidecar"
-	common_pb "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/common/v1"
-	metric_pb "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/metrics/v1"
-	"github.com/lightstep/opentelemetry-prometheus-sidecar/internal/otlptest"
+	"github.com/google/go-cmp/cmp"
+	ttest "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/translibtest"
 	"github.com/lightstep/opentelemetry-prometheus-sidecar/metadata"
 	"github.com/lightstep/opentelemetry-prometheus-sidecar/targets"
-	"github.com/prometheus/common/version"
 	"github.com/prometheus/prometheus/pkg/labels"
 	"github.com/prometheus/prometheus/pkg/textparse"
 	"github.com/prometheus/prometheus/tsdb/record"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/label"
-	messagediff "gopkg.in/d4l3k/messagediff.v1"
+	"go.opentelemetry.io/otel/metric"
+	export "go.opentelemetry.io/otel/sdk/export/metric"
 )
 
 // seriesMap implements seriesGetter.
@@ -55,28 +54,16 @@ func (m metadataMap) Get(ctx context.Context, job, instance, metric string) (*me
 	return m[job+"/"+instance+"/"+metric], nil
 }
 
+func timeUTC(s, n int64) time.Time {
+	return time.Unix(s, n).UTC()
+}
+
 func TestSampleBuilder(t *testing.T) {
-	type (
-		DoubleHistogramBucketStruct = otlptest.DoubleHistogramBucketStruct
-	)
 	var (
-		ResourceMetrics               = otlptest.ResourceMetrics
-		Resource                      = otlptest.Resource
-		ResourceLabels                = otlptest.ResourceLabels
-		KeyValue                      = otlptest.KeyValue
-		InstrumentationLibrary        = otlptest.InstrumentationLibrary
-		InstrumentationLibraryMetrics = otlptest.InstrumentationLibraryMetrics
-		IntSumCumulativeMonotonic     = otlptest.IntSumCumulativeMonotonic
-		IntGauge                      = otlptest.IntGauge
-		IntDataPoint                  = otlptest.IntDataPoint
-		DoubleSumCumulativeMonotonic  = otlptest.DoubleSumCumulativeMonotonic
-		DoubleGauge                   = otlptest.DoubleGauge
-		DoubleDataPoint               = otlptest.DoubleDataPoint
-		DoubleHistogramDataPoint      = otlptest.DoubleHistogramDataPoint
-		DoubleHistogramCumulative     = otlptest.DoubleHistogramCumulative
-		DoubleHistogramBucket         = otlptest.DoubleHistogramBucket
-		Labels                        = otlptest.Labels
-		Label                         = otlptest.Label
+		Labels         = ttest.Labels
+		ResourceLabels = ttest.ResourceLabels
+		KeyValue       = ttest.KeyValue
+		Label          = ttest.KeyValue
 
 		testResource = ResourceLabels(
 			KeyValue("resource_a", "abc"),
@@ -86,127 +73,14 @@ func TestSampleBuilder(t *testing.T) {
 			KeyValue("unused", "xxx"),
 		)
 
-		DoubleCounterPoint = func(
-			reslab []*common_pb.KeyValue,
-			labels []*common_pb.StringKeyValue,
-			name string,
-			start, end time.Time,
-			value float64,
-		) *metric_pb.ResourceMetrics {
-			return ResourceMetrics(
-				Resource(reslab...),
-				InstrumentationLibraryMetrics(
-					InstrumentationLibrary(sidecar.ExportInstrumentationLibrary, version.Version),
-					DoubleSumCumulativeMonotonic(
-						name, "", "",
-						DoubleDataPoint(
-							labels,
-							start,
-							end,
-							value,
-						),
-					),
-				),
-			)
-		}
-		DoubleGaugePoint = func(
-			reslab []*common_pb.KeyValue,
-			labels []*common_pb.StringKeyValue,
-			name string,
-			end time.Time,
-			value float64,
-		) *metric_pb.ResourceMetrics {
-			return ResourceMetrics(
-				Resource(reslab...),
-				InstrumentationLibraryMetrics(
-					InstrumentationLibrary(sidecar.ExportInstrumentationLibrary, version.Version),
-					DoubleGauge(
-						name, "", "",
-						DoubleDataPoint(
-							labels,
-							time.Unix(0, 0),
-							end,
-							value,
-						),
-					),
-				),
-			)
-		}
-
-		IntCounterPoint = func(
-			reslab []*common_pb.KeyValue,
-			labels []*common_pb.StringKeyValue,
-			name string,
-			start, end time.Time,
-			value int64,
-		) *metric_pb.ResourceMetrics {
-			return ResourceMetrics(
-				Resource(reslab...),
-				InstrumentationLibraryMetrics(
-					InstrumentationLibrary(sidecar.ExportInstrumentationLibrary, version.Version),
-					IntSumCumulativeMonotonic(
-						name, "", "",
-						IntDataPoint(
-							labels,
-							start,
-							end,
-							value,
-						),
-					),
-				),
-			)
-		}
-		IntGaugePoint = func(
-			reslab []*common_pb.KeyValue,
-			labels []*common_pb.StringKeyValue,
-			name string,
-			end time.Time,
-			value int64,
-		) *metric_pb.ResourceMetrics {
-			return ResourceMetrics(
-				Resource(reslab...),
-				InstrumentationLibraryMetrics(
-					InstrumentationLibrary(sidecar.ExportInstrumentationLibrary, version.Version),
-					IntGauge(
-						name, "", "",
-						IntDataPoint(
-							labels,
-							time.Unix(0, 0),
-							end,
-							value,
-						),
-					),
-				),
-			)
-		}
-
-		DoubleHistogramPoint = func(
-			reslab []*common_pb.KeyValue,
-			labels []*common_pb.StringKeyValue,
-			name string,
-			start, end time.Time,
-			sum float64, count uint64,
-			buckets ...DoubleHistogramBucketStruct,
-		) *metric_pb.ResourceMetrics {
-			return ResourceMetrics(
-				Resource(reslab...),
-				InstrumentationLibraryMetrics(
-					InstrumentationLibrary(sidecar.ExportInstrumentationLibrary, version.Version),
-					DoubleHistogramCumulative(
-						name, "", "",
-						DoubleHistogramDataPoint(
-							labels,
-							start,
-							end,
-							sum,
-							count,
-							buckets...,
-						),
-					),
-				),
-			)
-		}
+		DoubleCounterPoint    = ttest.DoubleCounterPoint
+		IntCounterPoint       = ttest.IntCounterPoint
+		DoubleGaugePoint      = ttest.DoubleGaugePoint
+		IntGaugePoint         = ttest.IntGaugePoint
+		DoubleHistogramPoint  = ttest.DoubleHistogramPoint
+		DoubleHistogramBucket = ttest.DoubleHistogramBucket
 	)
+
 	cases := []struct {
 		name          string
 		series        seriesMap
@@ -214,8 +88,7 @@ func TestSampleBuilder(t *testing.T) {
 		metadata      MetadataGetter
 		metricsPrefix string
 		input         []record.RefSample
-		result        []*metric_pb.ResourceMetrics
-		fail          bool
+		result        []*export.Record
 	}{
 		{
 			name: "basics",
@@ -275,22 +148,22 @@ func TestSampleBuilder(t *testing.T) {
 				{Ref: 9, T: 8000, V: 3},
 				{Ref: 9, T: 9000, V: 4},
 			},
-			result: []*metric_pb.ResourceMetrics{
+			result: []*export.Record{
 				nil, // Skipped by reset timestamp handling.
 				DoubleCounterPoint( // 1: second point in series, first reported.
 					testResource,
 					Labels(),
 					"metric2",
-					time.Unix(2, 0),
-					time.Unix(3, 0),
+					timeUTC(2, 0),
+					timeUTC(3, 0),
 					2.5,
 				),
 				DoubleCounterPoint( // 2: third point in series, secnod reported.
 					testResource,
 					Labels(),
 					"metric2",
-					time.Unix(2, 0),
-					time.Unix(4, 0),
+					timeUTC(2, 0),
+					timeUTC(4, 0),
 					3.5,
 				),
 				DoubleCounterPoint( // 3: A reset
@@ -299,15 +172,15 @@ func TestSampleBuilder(t *testing.T) {
 					testResource,
 					Labels(),
 					"metric2",
-					time.Unix(5, int64(-time.Millisecond)),
-					time.Unix(5, 0),
+					timeUTC(5, int64(-time.Millisecond)),
+					timeUTC(5, 0),
 					3,
 				),
 				DoubleGaugePoint( // 4: A double Gauge
 					testResource,
 					Labels(Label("a", "1")),
 					"metric1",
-					time.Unix(1, 0),
+					timeUTC(1, 0),
 					200,
 				),
 				DoubleGaugePoint( // 5: A double gauge w/ 10 keys
@@ -325,7 +198,7 @@ func TestSampleBuilder(t *testing.T) {
 						Label("j", "10"),
 					),
 					"labelnum_ok",
-					time.Unix(3, 0),
+					timeUTC(3, 0),
 					1,
 				),
 				DoubleGaugePoint( // 6: A double gauge w/ 11 keys
@@ -344,7 +217,7 @@ func TestSampleBuilder(t *testing.T) {
 						Label("k", "11"),
 					),
 					"labelnum_11k",
-					time.Unix(4, 0),
+					timeUTC(4, 0),
 					2,
 				),
 				DoubleGaugePoint( // 7
@@ -355,7 +228,7 @@ func TestSampleBuilder(t *testing.T) {
 						Label("metric_label", "aaa"),
 					),
 					"resource_from_metric",
-					time.Unix(1, 0),
+					timeUTC(1, 0),
 					200,
 				),
 				IntGaugePoint( // 8
@@ -363,7 +236,7 @@ func TestSampleBuilder(t *testing.T) {
 					testResource,
 					Labels(),
 					"metric3",
-					time.Unix(8, 0),
+					timeUTC(8, 0),
 					13,
 				),
 				nil, // 9; Skipped by reset timestamp handling.
@@ -372,8 +245,8 @@ func TestSampleBuilder(t *testing.T) {
 					testResource,
 					Labels(),
 					"metric4",
-					time.Unix(6, 0),
-					time.Unix(7, 0),
+					timeUTC(6, 0),
+					timeUTC(7, 0),
 					3,
 				),
 				DoubleGaugePoint( // 11
@@ -381,15 +254,15 @@ func TestSampleBuilder(t *testing.T) {
 					testResource,
 					Labels(),
 					"metric5",
-					time.Unix(8, 0),
+					timeUTC(8, 0),
 					22.5),
 				nil, // 12; Skipped by reset timestamp handling.
 				DoubleCounterPoint( // 13
 					testResource,
 					Labels(),
 					"metric6",
-					time.Unix(8, 0),
-					time.Unix(9, 0),
+					timeUTC(8, 0),
+					timeUTC(9, 0),
 					1,
 				),
 			},
@@ -420,7 +293,7 @@ func TestSampleBuilder(t *testing.T) {
 				{Ref: 2, T: 2000, V: 2},
 				{Ref: 3, T: 3000, V: 3},
 			},
-			result: []*metric_pb.ResourceMetrics{nil, nil, nil},
+			result: []*export.Record{nil, nil, nil},
 		},
 		// Summary metrics.
 		{
@@ -448,21 +321,21 @@ func TestSampleBuilder(t *testing.T) {
 				{Ref: 3, T: 3500, V: 4},
 				{Ref: 4, T: 4000, V: 4},
 			},
-			result: []*metric_pb.ResourceMetrics{
+			result: []*export.Record{
 				nil, // 0: dropped by reset handling.
 				DoubleCounterPoint(
 					testResource,
 					Labels(),
 					"metric1_sum",
-					time.Unix(1, 0),
-					time.Unix(1, int64(500*time.Millisecond)),
+					timeUTC(1, 0),
+					timeUTC(1, int64(500*time.Millisecond)),
 					0,
 				),
 				DoubleGaugePoint(
 					testResource,
 					Labels(Label("quantile", "0.5")),
 					"metric1",
-					time.Unix(2, 0),
+					timeUTC(2, 0),
 					2,
 				),
 				nil, // 3: dropped
@@ -470,15 +343,15 @@ func TestSampleBuilder(t *testing.T) {
 					testResource,
 					Labels(),
 					"metric1_count",
-					time.Unix(3, 0),
-					time.Unix(3, int64(500*time.Millisecond)),
+					timeUTC(3, 0),
+					timeUTC(3, int64(500*time.Millisecond)),
 					1,
 				),
 				DoubleGaugePoint(
 					testResource,
 					Labels(Label("quantile", "0.9")),
 					"metric1",
-					time.Unix(4, 0),
+					timeUTC(4, 0),
 					4,
 				),
 			},
@@ -537,14 +410,14 @@ func TestSampleBuilder(t *testing.T) {
 				// New metric that actually matches the base name but the suffix is more more than a valid histogram suffix.
 				{Ref: 10, T: 1000, V: 3},
 			},
-			result: []*metric_pb.ResourceMetrics{
+			result: []*export.Record{
 				nil, // 0: skipped by reset handling.
 				DoubleHistogramPoint( // 1:
 					testResource,
 					Labels(),
 					"metric1",
-					time.Unix(1, 0),
-					time.Unix(2, 0),
+					timeUTC(1, 0),
+					timeUTC(2, 0),
 					float64(123.4)-float64(55.1),
 					21-10,
 					DoubleHistogramBucket(0.1, 2),
@@ -558,8 +431,8 @@ func TestSampleBuilder(t *testing.T) {
 					testResource,
 					Labels(Label("a", "b")),
 					"metric1",
-					time.Unix(1, 0),
-					time.Unix(2, 0),
+					timeUTC(1, 0),
+					timeUTC(2, 0),
 					15,
 					3,
 				),
@@ -567,7 +440,7 @@ func TestSampleBuilder(t *testing.T) {
 					testResource,
 					Labels(Label("a", "b")),
 					"metric1_a_count",
-					time.Unix(1, 0),
+					timeUTC(1, 0),
 					3,
 				),
 			},
@@ -606,15 +479,15 @@ func TestSampleBuilder(t *testing.T) {
 				{Ref: 2, T: 3500, V: 3},
 				{Ref: 1, T: 3000, V: 2},
 			},
-			result: []*metric_pb.ResourceMetrics{
+			result: []*export.Record{
 				nil, // Skipped by reset timestamp handling.
 				nil, // Skipped by reset timestamp handling.
 				DoubleCounterPoint(
 					testResource,
 					Labels(),
 					"metric1",
-					time.Unix(1, 0),
-					time.Unix(2, 0),
+					timeUTC(1, 0),
+					timeUTC(2, 0),
 					5,
 				),
 				nil, // Rejected because of overlap.
@@ -622,8 +495,8 @@ func TestSampleBuilder(t *testing.T) {
 					testResource,
 					Labels(),
 					"metric1",
-					time.Unix(3, 5e8-1e6),
-					time.Unix(3, 5e8),
+					timeUTC(3, 5e8-1e6),
+					timeUTC(3, 5e8),
 					3,
 				),
 				nil, // Rejected because of overlap.
@@ -648,12 +521,12 @@ func TestSampleBuilder(t *testing.T) {
 			input: []record.RefSample{
 				{Ref: 1, T: 1000, V: 200},
 			},
-			result: []*metric_pb.ResourceMetrics{
+			result: []*export.Record{
 				DoubleGaugePoint(
 					testResource,
 					Labels(Label("a", "1")),
 					"test.otel.io/metric1",
-					time.Unix(1, 0),
+					timeUTC(1, 0),
 					200,
 				),
 			},
@@ -678,14 +551,14 @@ func TestSampleBuilder(t *testing.T) {
 				{Ref: 1, T: 2000, V: 5.5},
 				{Ref: 1, T: 3000, V: 8},
 			},
-			result: []*metric_pb.ResourceMetrics{
+			result: []*export.Record{
 				nil, // Skipped by reset timestamp handling.
 				DoubleCounterPoint(
 					testResource,
 					Labels(Label("a", "1")),
 					"metric1_total",
-					time.Unix(2, 0),
-					time.Unix(3, 0),
+					timeUTC(2, 0),
+					timeUTC(3, 0),
 					2.5,
 				),
 			},
@@ -711,14 +584,14 @@ func TestSampleBuilder(t *testing.T) {
 				{Ref: 1, T: 2000, V: 5.5},
 				{Ref: 1, T: 3000, V: 8},
 			},
-			result: []*metric_pb.ResourceMetrics{
+			result: []*export.Record{
 				nil, // Skipped by reset timestamp handling.
 				DoubleCounterPoint(
 					testResource,
 					Labels(Label("a", "1")),
 					"metric1",
-					time.Unix(2, 0),
-					time.Unix(3, 0),
+					timeUTC(2, 0),
+					timeUTC(3, 0),
 					2.5,
 				),
 			},
@@ -743,12 +616,12 @@ func TestSampleBuilder(t *testing.T) {
 			input: []record.RefSample{
 				{Ref: 1, T: 3000, V: 8},
 			},
-			result: []*metric_pb.ResourceMetrics{
+			result: []*export.Record{
 				DoubleGaugePoint(
 					testResource,
 					Labels(Label("a", "1")),
 					"metric1_total",
-					time.Unix(3, 0),
+					timeUTC(3, 0),
 					8,
 				),
 			},
@@ -773,7 +646,7 @@ func TestSampleBuilder(t *testing.T) {
 				{Ref: 1, T: 2000, V: 5},
 				{Ref: 1, T: 4000, V: math.NaN()},
 			},
-			result: []*metric_pb.ResourceMetrics{
+			result: []*export.Record{
 				nil, // due to reset timestamp handling
 				nil, // due to NaN
 			},
@@ -799,15 +672,15 @@ func TestSampleBuilder(t *testing.T) {
 				{Ref: 1, T: 4000, V: math.NaN()},
 				{Ref: 1, T: 5000, V: 9},
 			},
-			result: []*metric_pb.ResourceMetrics{
+			result: []*export.Record{
 				nil, // due to reset timestamp handling
 				nil, // due to NaN
 				IntCounterPoint(
 					testResource,
 					Labels(),
 					"metric1_count",
-					time.Unix(2, 0),
-					time.Unix(5, 0),
+					timeUTC(2, 0),
+					timeUTC(5, 0),
 					4,
 				),
 			},
@@ -820,9 +693,9 @@ func TestSampleBuilder(t *testing.T) {
 		t.Run(fmt.Sprintf("Test case %s", c.name),
 			func(t *testing.T) {
 
-				var s *metric_pb.ResourceMetrics
+				var s *export.Record
 				var err error
-				var result []*metric_pb.ResourceMetrics
+				var result []*export.Record
 
 				series := newSeriesCache(nil, "", nil, nil, c.targets, c.metadata, c.metricsPrefix)
 				for ref, s := range c.series {
@@ -833,19 +706,17 @@ func TestSampleBuilder(t *testing.T) {
 
 				for k := 0; len(c.input) > 0; k++ {
 					s, c.input, err = b.next(context.Background(), c.input)
-					if err != nil {
-						break
-					}
+					require.NoError(t, err)
 					result = append(result, s)
 				}
-				if err == nil && c.fail {
-					t.Error("expected error but got none")
-				}
-				if err != nil && !c.fail {
-					t.Errorf("unexpected error: %s", err)
-				}
-				if diff, equal := messagediff.PrettyDiff(c.result, result); !equal {
-					t.Errorf("unexpected result:\n%v", diff)
+
+				if diff := cmp.Diff(c.result, result,
+					cmp.AllowUnexported(export.Metadata{}, metric.Descriptor{}, export.Record{}),
+					cmp.Comparer(func(x, y *label.Set) bool {
+						return x.Equivalent() == y.Equivalent()
+					}),
+				); diff != "" {
+					t.Errorf("unexpected diff: %v", diff)
 				}
 
 				if len(result) != len(c.result) {

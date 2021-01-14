@@ -51,6 +51,7 @@ const (
 	CUMULATIVE Kind = 2
 	DELTA      Kind = 3
 
+	UNSPECIFIED  ValueType = 0
 	DOUBLE       ValueType = 1
 	INT64        ValueType = 2
 	DISTRIBUTION ValueType = 3
@@ -146,7 +147,12 @@ func (c *Cache) Get(ctx context.Context, job, instance, metric string) (*Entry, 
 	// contain at least one `:` character. In that case we can generally assume that
 	// it is a gauge. We leave the help text empty.
 	if strings.Contains(metric, ":") {
-		entry := &Entry{Metric: metric, MetricType: textparse.MetricTypeGauge}
+		entry := &Entry{
+			Metric:     metric,
+			MetricType: textparse.MetricTypeGauge,
+			ValueType:  DOUBLE,
+			// TODO: Help
+		}
 		return entry, nil
 	}
 	return nil, nil
@@ -204,7 +210,12 @@ func (c *Cache) fetchMetric(ctx context.Context, job, instance, metric string) (
 		d.Type = textparse.MetricTypeUnknown
 	}
 	return &cacheEntry{
-		Entry:     &Entry{Metric: metric, MetricType: d.Type, Help: d.Help},
+		Entry: &Entry{
+			Metric:     metric,
+			MetricType: d.Type,
+			Help:       d.Help,
+			ValueType:  DOUBLE,
+		},
 		lastFetch: now,
 		found:     true,
 	}, nil
@@ -240,7 +251,12 @@ func (c *Cache) fetchBatch(ctx context.Context, job, instance string) (map[strin
 			md.Type = textparse.MetricTypeUnknown
 		}
 		result[md.Metric] = &cacheEntry{
-			Entry:     &Entry{Metric: md.Metric, MetricType: md.Type, Help: md.Help},
+			Entry: &Entry{
+				Metric:     md.Metric,
+				MetricType: md.Type,
+				ValueType:  DOUBLE,
+				Help:       md.Help,
+			},
 			lastFetch: now,
 			found:     true,
 		}

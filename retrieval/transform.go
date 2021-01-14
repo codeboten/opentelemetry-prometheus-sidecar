@@ -15,13 +15,13 @@ package retrieval
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/lightstep/opentelemetry-prometheus-sidecar/internal/translib"
 	"github.com/lightstep/opentelemetry-prometheus-sidecar/metadata"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/pkg/labels"
@@ -60,7 +60,6 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 	tailSamples := samples[1:]
 
 	if math.IsNaN(sample.V) {
-		fmt.Println("NAN CASE") // TODO: Metric this case?
 		return nil, tailSamples, nil
 	}
 
@@ -69,12 +68,10 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 		return nil, samples, errors.Wrap(err, "get series information")
 	}
 	if !ok {
-		fmt.Println("!OK CASE") // TODO: Log this case?
 		return nil, tailSamples, nil
 	}
 
 	if !entry.exported {
-		fmt.Println("!EXPORTED CASE") // TODO: Debug-log this case?
 		return nil, tailSamples, nil
 	}
 
@@ -86,15 +83,16 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 		endTime   promTime = promTime(sample.T)
 	)
 
-	if entry.metadata.ValueType == metadata.INT64 {
+	switch entry.metadata.ValueType {
+	case metadata.INT64:
 		nkind = number.Int64Kind
-	} else {
+	default:
 		nkind = number.Float64Kind
 	}
 
 	switch entry.metadata.MetricType {
 	case textparse.MetricTypeCounter:
-		ikind = otelapi.CounterInstrumentKind
+		ikind = otelapi.SumObserverInstrumentKind
 
 		var value float64
 		startTime, value, ok = b.series.getResetAdjusted(walRef(sample.Ref), endTime, sample.V)
@@ -103,21 +101,21 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 		}
 
 		if entry.metadata.ValueType == metadata.INT64 {
-			agg = numberSum(number.NewInt64Number(int64(value)))
+			agg = translib.Sum(number.NewInt64Number(int64(value + 0.5))) // Note: Rounding!
 		} else {
-			agg = numberSum(number.NewFloat64Number(value))
+			agg = translib.Sum(number.NewFloat64Number(value))
 		}
 
 	case textparse.MetricTypeGauge, textparse.MetricTypeUnknown:
-		ikind = otelapi.ValueRecorderInstrumentKind
+		ikind = otelapi.ValueObserverInstrumentKind
 
 		if entry.metadata.ValueType == metadata.INT64 {
-			agg = numberLastValue{
-				V: number.NewInt64Number(int64(sample.V)),
+			agg = translib.LastValue{
+				V: number.NewInt64Number(int64(sample.V + 0.5)), // Note: Rounding!
 				T: timestamp.Time(sample.T),
 			}
 		} else {
-			agg = numberLastValue{
+			agg = translib.LastValue{
 				V: number.NewFloat64Number(sample.V),
 				T: timestamp.Time(sample.T),
 			}
@@ -128,27 +126,31 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 
 		switch entry.suffix {
 		case metricSuffixSum:
-			ikind = otelapi.CounterInstrumentKind
+			ikind = otelapi.SumObserverInstrumentKind
 
 			var value float64
 			startTime, value, ok = b.series.getResetAdjusted(walRef(sample.Ref), endTime, sample.V)
 			if !ok {
 				return nil, tailSamples, nil
 			}
-			agg = numberSum(number.NewFloat64Number(value))
+			agg = translib.Sum(number.NewFloat64Number(value))
 		case metricSuffixCount:
-			ikind = otelapi.CounterInstrumentKind
+			ikind = otelapi.SumObserverInstrumentKind
+			nkind = number.Int64Kind // Counts are integers
 
 			var value float64
 			startTime, value, ok = b.series.getResetAdjusted(walRef(sample.Ref), endTime, sample.V)
 			if !ok {
 				return nil, tailSamples, nil
 			}
-			agg = numberSum(number.NewFloat64Number(value))
+			agg = translib.Sum(number.NewInt64Number(int64(value + 0.5)))
 		case "": // Actual quantiles.
 			ikind = otelapi.ValueObserverInstrumentKind
 
-			agg = numberSum(number.NewFloat64Number(sample.V))
+			agg = translib.LastValue{
+				V: number.NewFloat64Number(sample.V),
+				T: timestamp.Time(sample.T),
+			}
 		default:
 			return nil, tailSamples, errors.Errorf("unexpected metric name suffix %q", entry.suffix)
 		}
@@ -157,14 +159,12 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 		// We pass in the original lset for matching since Prometheus's target label must
 		// be the same as well.
 		// Note: Always using DoubleHistogram points, ignores entry.metadata.ValueType.
+		nkind = number.Float64Kind
+		ikind = otelapi.ValueRecorderInstrumentKind
 		agg, startTime, tailSamples, err = b.buildHistogram(ctx, entry.metadata.Metric, entry.lset, samples)
 		if agg == nil || err != nil {
-			if agg == nil && err == nil {
-				err = errors.Errorf("missing histogram points")
-			}
 			return nil, tailSamples, err
 		}
-		ikind = otelapi.ValueRecorderInstrumentKind
 
 	default:
 		return nil, samples[1:], errors.Errorf("unexpected metric type %s", entry.metadata.MetricType)
@@ -349,11 +349,11 @@ Loop:
 	for i := range values {
 		asFloats[i] = float64(values[i])
 	}
-	histogram := float64Histogram{
-		sum:    sum,
-		count:  int64(count),
-		bounds: bounds,
-		values: asFloats,
+	histogram := translib.Histogram{
+		TotalSum:   sum,
+		TotalCount: int64(count),
+		Boundaries: bounds,
+		Counts:     asFloats,
 	}
 	return histogram, resetTimestamp, samples[consumed:], nil
 }
@@ -394,59 +394,4 @@ func histogramLabelsEqual(a, b labels.Labels) bool {
 	}
 	// If one label set still has labels left, they are not equal.
 	return i == len(a) && j == len(b)
-}
-
-type numberSum number.Number
-
-var _ otelagg.Sum = numberSum(0)
-
-func (s numberSum) Kind() otelagg.Kind {
-	return otelagg.SumKind
-}
-
-func (s numberSum) Sum() (number.Number, error) {
-	return number.Number(s), nil
-}
-
-type numberLastValue struct {
-	V number.Number
-	T time.Time
-}
-
-var _ otelagg.LastValue = numberLastValue{}
-
-func (lv numberLastValue) Kind() otelagg.Kind {
-	return otelagg.LastValueKind
-}
-
-func (lv numberLastValue) LastValue() (number.Number, time.Time, error) {
-	return lv.V, lv.T, nil
-}
-
-type float64Histogram struct {
-	count  int64
-	sum    float64
-	values []float64
-	bounds []float64
-}
-
-var _ otelagg.Histogram = float64Histogram{}
-
-func (h float64Histogram) Kind() otelagg.Kind {
-	return otelagg.HistogramKind
-}
-
-func (h float64Histogram) Count() (int64, error) {
-	return h.count, nil
-}
-
-func (h float64Histogram) Sum() (number.Number, error) {
-	return number.NewFloat64Number(h.sum), nil
-}
-
-func (h float64Histogram) Histogram() (aggregation.Buckets, error) {
-	return aggregation.Buckets{
-		Boundaries: h.bounds,
-		Counts:     h.values,
-	}, nil
 }

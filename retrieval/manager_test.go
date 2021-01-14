@@ -21,9 +21,6 @@ import (
 	"testing"
 	"time"
 
-	metric_pb "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/metrics/v1"
-	resource_pb "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/resource/v1"
-	"github.com/lightstep/opentelemetry-prometheus-sidecar/internal/otlptest"
 	"github.com/lightstep/opentelemetry-prometheus-sidecar/metadata"
 	"github.com/lightstep/opentelemetry-prometheus-sidecar/tail"
 	"github.com/lightstep/opentelemetry-prometheus-sidecar/targets"
@@ -32,14 +29,15 @@ import (
 	"github.com/prometheus/prometheus/tsdb/record"
 	"github.com/prometheus/prometheus/tsdb/wal"
 	"go.opentelemetry.io/otel/label"
+	export "go.opentelemetry.io/otel/sdk/export/metric"
 )
 
 type nopAppender struct {
 	lock    sync.Mutex
-	samples []*metric_pb.ResourceMetrics
+	samples []export.Record
 }
 
-func (a *nopAppender) Append(hash uint64, s *metric_pb.ResourceMetrics) error {
+func (a *nopAppender) Append(s export.Record) error {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
@@ -47,7 +45,7 @@ func (a *nopAppender) Append(hash uint64, s *metric_pb.ResourceMetrics) error {
 	return nil
 }
 
-func (a *nopAppender) getSamples() []*metric_pb.ResourceMetrics {
+func (a *nopAppender) getSamples() []export.Record {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 
@@ -180,24 +178,12 @@ func TestReader_Progress(t *testing.T) {
 	ctx = context.Background()
 
 	for i, s := range samples {
-		vs := otlptest.VisitorState{}
-		vs.Visit(ctx, func(
-			resource *resource_pb.Resource,
-			metricName string,
-			kind metadata.Kind,
-			monotonic bool,
-			point interface{},
-		) error {
-			nanos := point.(*metric_pb.DoubleDataPoint).TimeUnixNano
-			tseconds := time.Unix(0, int64(nanos)).Unix()
+		tseconds := s.EndTime().Unix()
 
-			if tseconds <= int64(progressOffset)-progressBufferMargin {
-				t.Fatalf("unexpected record %d for offset %d", i, tseconds)
-			}
-			return nil
-		}, s)
+		if tseconds <= int64(progressOffset)-progressBufferMargin {
+			t.Fatalf("unexpected record %d for offset %d", i, tseconds)
+		}
 	}
-
 }
 
 func TestReader_ProgressFile(t *testing.T) {
