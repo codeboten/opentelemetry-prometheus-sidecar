@@ -3,7 +3,6 @@ module github.com/lightstep/opentelemetry-prometheus-sidecar
 replace github.com/lightstep/opentelemetry-prometheus-sidecar/telemetry => ./telemetry
 
 require (
-	github.com/d4l3k/messagediff v1.2.1 // indirect
 	github.com/ghodss/yaml v1.0.0
 	github.com/go-kit/kit v0.10.0
 	github.com/gogo/protobuf v1.3.1
@@ -37,7 +36,6 @@ require (
 	google.golang.org/genproto v0.0.0-20200904004341-0bd0a958aa1d
 	google.golang.org/grpc v1.34.0
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
-	gopkg.in/d4l3k/messagediff.v1 v1.2.1
 )
 
 go 1.14

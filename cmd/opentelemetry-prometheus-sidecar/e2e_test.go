@@ -20,13 +20,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	metricService "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/collector/metrics/v1"
 	common "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/common/v1"
 	metrics "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/metrics/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	grpcMetadata "google.golang.org/grpc/metadata"
-	messagediff "gopkg.in/d4l3k/messagediff.v1"
 )
 
 // Ports used here:
@@ -261,14 +261,14 @@ func TestE2E(t *testing.T) {
 			rvals[attr.Key] = attr.Value.Value.(*common.AnyValue_StringValue).StringValue
 		}
 
-		if diff, equal := messagediff.PrettyDiff(rvals, map[string]string{
+		if diff := cmp.Diff(map[string]string{
 			"service.name": "Service",
 			"instance":     "127.0.0.1:19002",
 			"job":          "test-target",
 			"label1":       "L1",
 			"label2":       "L2",
-		}); !equal {
-			t.Errorf("unexpected resources:\n%v", diff)
+		}, rvals); diff != "" {
+			t.Errorf("unexpected diff: %v", diff)
 		}
 
 		output[name] = append(output[name], val)
@@ -285,8 +285,8 @@ func TestE2E(t *testing.T) {
 		"some_gauge":   []float64{1, 2, 3, 4, 5},
 	}
 
-	if diff, equal := messagediff.PrettyDiff(output, expect); !equal {
-		t.Errorf("unexpected result:\n%v", diff)
+	if diff := cmp.Diff(expect, output); diff != "" {
+		t.Errorf("unexpected diff: %v", diff)
 	}
 }
 
