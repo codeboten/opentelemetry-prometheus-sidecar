@@ -26,7 +26,6 @@ import (
 	"github.com/lightstep/opentelemetry-prometheus-sidecar/targets"
 	"github.com/pkg/errors"
 	"github.com/prometheus/prometheus/pkg/labels"
-	"github.com/prometheus/prometheus/pkg/textparse"
 	"github.com/prometheus/prometheus/tsdb/record"
 	"github.com/prometheus/prometheus/tsdb/wal"
 	"go.opentelemetry.io/otel/label"
@@ -397,16 +396,17 @@ func (c *seriesCache) refresh(ctx context.Context, ref uint64) error {
 	sort.Sort(&ts.Labels)
 
 	switch meta.PointKind {
-	case config.CounterKind:
-		ts.PointKind = config.CounterKind
+	case config.CounterKind, config.NonMonotonicCounterKind,
+		config.DeltaKind, config.NonMonotonicDeltaKind:
+		ts.PointKind = meta.PointKind
 		ts.NumberType = meta.NumberType
 		if baseMetricName != "" && suffix == metricSuffixTotal {
 			ts.Name = c.getMetricName(c.metricsPrefix, baseMetricName)
 		}
 	case config.GaugeKind:
-		ts.PointKind = config.GaugeKind
+		ts.PointKind = meta.PointKind
 		ts.NumberType = meta.NumberType
-	case textparse.MetricTypeSummary:
+	case config.SummaryKind:
 		switch suffix {
 		case metricSuffixSum:
 			ts.PointKind = config.CounterKind
@@ -420,9 +420,9 @@ func (c *seriesCache) refresh(ctx context.Context, ref uint64) error {
 		default:
 			return errors.Errorf("unexpected metric name suffix %q", suffix)
 		}
-	case textparse.MetricTypeHistogram:
+	case config.HistogramKind:
 		ts.Name = c.getMetricName(c.metricsPrefix, baseMetricName)
-		ts.PointKind = config.HistogramKind
+		ts.PointKind = meta.PointKind
 		ts.NumberType = config.DoubleType
 	default:
 		return errors.Errorf("unexpected point kind %s", meta.PointKind)

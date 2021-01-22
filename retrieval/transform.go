@@ -26,7 +26,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/version"
 	"github.com/prometheus/prometheus/pkg/labels"
-	"github.com/prometheus/prometheus/pkg/textparse"
 	"github.com/prometheus/prometheus/tsdb/record"
 
 	common_pb "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/common/v1"
@@ -36,7 +35,15 @@ import (
 
 const (
 	otlpCUMULATIVE = metric_pb.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE
+	otlpDELTA      = metric_pb.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA
 )
+
+func temporality(pk config.PointKind) metric_pb.AggregationTemporality {
+	if pk.CumulativeSum() {
+		return otlpCUMULATIVE
+	}
+	return otlpDELTA
+}
 
 // Appender appends a time series with exactly one data point. A hash for the series
 // (but not the data point) must be provided.
@@ -90,9 +97,15 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 
 	var resetTimestamp int64
 
-	switch entry.metadata.PointKind {
-	case config.CounterKind:
+	pk := entry.metadata.PointKind
+	switch pk {
+	case config.CounterKind,
+		config.DeltaKind,
+		config.NonMonotonicCounterKind,
+		config.NonMonotonicDeltaKind:
 		var value float64
+
+		// @@@ HERE: Use the point kind, treat the three new kinds differently
 		resetTimestamp, value, ok = b.series.getResetAdjusted(sample.Ref, sample.T, sample.V)
 		if !ok {
 			return nil, 0, tailSamples, nil
@@ -100,15 +113,15 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 
 		if entry.metadata.NumberType == config.IntType {
 			point.Data = &metric_pb.Metric_IntSum{
-				IntSum: monotonicIntegerPoint(labels, resetTimestamp, sample.T, value),
+				IntSum: integerPoint(labels, resetTimestamp, sample.T, pk, value),
 			}
 		} else {
 			point.Data = &metric_pb.Metric_DoubleSum{
-				DoubleSum: monotonicDoublePoint(labels, resetTimestamp, sample.T, value),
+				DoubleSum: doublePoint(labels, resetTimestamp, sample.T, pk, value),
 			}
 		}
 
-	case textparse.MetricTypeGauge, textparse.MetricTypeUnknown:
+	case config.GaugeKind:
 		if entry.metadata.NumberType == config.IntType {
 			point.Data = &metric_pb.Metric_IntGauge{
 				IntGauge: intGauge(labels, sample.T, sample.V),
@@ -119,7 +132,7 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 			}
 		}
 
-	case textparse.MetricTypeSummary:
+	case config.SummaryKind:
 		switch entry.suffix {
 		case metricSuffixSum:
 			var value float64
@@ -128,7 +141,7 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 				return nil, 0, tailSamples, nil
 			}
 			point.Data = &metric_pb.Metric_DoubleSum{
-				DoubleSum: monotonicDoublePoint(labels, resetTimestamp, sample.T, value),
+				DoubleSum: doublePoint(labels, resetTimestamp, sample.T, config.CounterKind, value),
 			}
 		case metricSuffixCount:
 			var value float64
@@ -137,7 +150,7 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 				return nil, 0, tailSamples, nil
 			}
 			point.Data = &metric_pb.Metric_IntSum{
-				IntSum: monotonicIntegerPoint(labels, resetTimestamp, sample.T, value),
+				IntSum: integerPoint(labels, resetTimestamp, sample.T, config.CounterKind, value),
 			}
 		case "": // Actual quantiles.
 			point.Data = &metric_pb.Metric_DoubleGauge{
@@ -147,7 +160,7 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 			return nil, 0, tailSamples, errors.Errorf("unexpected metric name suffix %q", entry.suffix)
 		}
 
-	case textparse.MetricTypeHistogram:
+	case config.HistogramKind:
 		// We pass in the original lset for matching since Prometheus's target label must
 		// be the same as well.
 		// Note: Always using DoubleHistogram points, ignores entry.metadata.NumberType.
@@ -448,7 +461,7 @@ func histogramLabelsEqual(a, b labels.Labels) bool {
 	return i == len(a) && j == len(b)
 }
 
-func monotonicIntegerPoint(labels []*common_pb.StringKeyValue, start, end int64, value float64) *metric_pb.IntSum {
+func integerPoint(labels []*common_pb.StringKeyValue, start, end int64, pk config.PointKind, value float64) *metric_pb.IntSum {
 	integer := &metric_pb.IntDataPoint{
 		Labels:            labels,
 		StartTimeUnixNano: getNanos(start),
@@ -456,13 +469,13 @@ func monotonicIntegerPoint(labels []*common_pb.StringKeyValue, start, end int64,
 		Value:             int64(value + 0.5),
 	}
 	return &metric_pb.IntSum{
-		IsMonotonic:            true,
-		AggregationTemporality: otlpCUMULATIVE,
+		IsMonotonic:            pk.MonotonicSum(),
+		AggregationTemporality: temporality(pk),
 		DataPoints:             []*metric_pb.IntDataPoint{integer},
 	}
 }
 
-func monotonicDoublePoint(labels []*common_pb.StringKeyValue, start, end int64, value float64) *metric_pb.DoubleSum {
+func doublePoint(labels []*common_pb.StringKeyValue, start, end int64, pk config.PointKind, value float64) *metric_pb.DoubleSum {
 	double := &metric_pb.DoubleDataPoint{
 		Labels:            labels,
 		StartTimeUnixNano: getNanos(start),
@@ -470,8 +483,8 @@ func monotonicDoublePoint(labels []*common_pb.StringKeyValue, start, end int64, 
 		Value:             value,
 	}
 	return &metric_pb.DoubleSum{
-		IsMonotonic:            true,
-		AggregationTemporality: otlpCUMULATIVE,
+		IsMonotonic:            pk.MonotonicSum(),
+		AggregationTemporality: temporality(pk),
 		DataPoints:             []*metric_pb.DoubleDataPoint{double},
 	}
 }

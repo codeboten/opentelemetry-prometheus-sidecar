@@ -82,14 +82,27 @@ const (
 	DoubleType NumberType = "double"
 	IntType    NumberType = "int"
 
+	// These kinds map to Prometheus 1:1
+
+	CounterKind   PointKind = "counter"
+	GaugeKind     PointKind = "gauge"
+	HistogramKind PointKind = "histogram"
+	SummaryKind   PointKind = "summary"
+
+	// OTLP adds these kinds:
+
 	DeltaKind               PointKind = "delta"
-	CounterKind             PointKind = "counter"
 	NonMonotonicDeltaKind   PointKind = "non-monotonic-delta"
 	NonMonotonicCounterKind PointKind = "non-monotonic-counter"
-	GaugeKind               PointKind = "gauge"
-	HistogramKind           PointKind = "histogram"
-	SummaryKind             PointKind = "summary"
 )
+
+func (pk PointKind) MonotonicSum() bool {
+	return pk == DeltaKind || pk == CounterKind
+}
+
+func (pk PointKind) CumulativeSum() bool {
+	return pk == CounterKind || pk == NonMonotonicCounterKind
+}
 
 type MetadataConfig struct {
 	// Name is the metric's exact name.  This field is exclusive
@@ -381,9 +394,9 @@ func ParsePointKind(pk string) (PointKind, error) {
 	switch strings.ToLower(pk) {
 	case "gauge", "untyped", "unknown":
 		return GaugeKind, nil
-	case "counter", "monotonic-counter":
+	case "counter":
 		return CounterKind, nil
-	case "delta", "monotonic-delta":
+	case "delta":
 		return DeltaKind, nil
 	case "non-monotonic-delta":
 		return NonMonotonicDeltaKind, nil
