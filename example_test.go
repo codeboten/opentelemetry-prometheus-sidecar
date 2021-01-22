@@ -84,10 +84,10 @@ func Example() {
         //   ],
         //   "static_metadata": [
         //     {
-        //       "metric": "network_bps",
-        //       "type": "counter",
-        //       "value_type": "int64",
-        //       "help": "Number of bits transferred by this process."
+        //       "name": "network_bps",
+        //       "point_kind": "counter",
+        //       "number_type": "int",
+        //       "description": "Number of bits transferred by this process."
         //     }
         //   ],
         //   "log_config": {

@@ -91,7 +91,7 @@ func (b *sampleBuilder) next(ctx context.Context, samples []record.RefSample) (*
 	var resetTimestamp int64
 
 	switch entry.metadata.PointKind {
-	case config.CumulativeKind:
+	case config.CounterKind:
 		var value float64
 		resetTimestamp, value, ok = b.series.getResetAdjusted(sample.Ref, sample.T, sample.V)
 		if !ok {

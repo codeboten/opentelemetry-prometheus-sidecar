@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/go-kit/kit/log"
-	"github.com/lightstep/opentelemetry-prometheus-sidecar/metadata"
+	"github.com/lightstep/opentelemetry-prometheus-sidecar/config"
 	"github.com/lightstep/opentelemetry-prometheus-sidecar/targets"
 	"github.com/prometheus/prometheus/pkg/labels"
 	"github.com/prometheus/prometheus/pkg/textparse"
@@ -54,7 +54,7 @@ func TestScrapeCache_GarbageCollect(t *testing.T) {
 	logger := log.NewLogfmtLogger(logBuffer)
 	c := newSeriesCache(logger, dir, nil, nil,
 		targetMap{"/": &targets.Target{}},
-		metadataMap{"//": &metadata.Entry{MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE}},
+		metadataMap{"//": &config.MetadataConfig{PointKind: textparse.MetricTypeGauge, NumberType: config.DoubleType}},
 		"",
 	)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -225,7 +225,7 @@ func TestSeriesCache_Refresh(t *testing.T) {
 		Labels:           labels.FromStrings("job", "job1", "instance", "inst1"),
 		DiscoveredLabels: labels.FromStrings("__resource_a", "resource2_a"),
 	}
-	metadataMap["job1/inst1/metric1"] = &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE}
+	metadataMap["job1/inst1/metric1"] = &config.MetadataConfig{Name: "metric1", PointKind: textparse.MetricTypeGauge, NumberType: config.DoubleType}
 
 	// Hack the timestamp of the last update to be sufficiently in the past that a refresh
 	// will be triggered.
@@ -289,7 +289,7 @@ func TestSeriesCache_Filter(t *testing.T) {
 		},
 	}
 	metadataMap := metadataMap{
-		"job1/inst1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
+		"job1/inst1/metric1": &config.MetadataConfig{Name: "metric1", PointKind: textparse.MetricTypeGauge, NumberType: config.DoubleType},
 	}
 	logBuffer := &bytes.Buffer{}
 	defer func() {
@@ -344,8 +344,8 @@ func TestSeriesCache_RenameMetric(t *testing.T) {
 		},
 	}
 	metadataMap := metadataMap{
-		"job1/inst1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
-		"job1/inst1/metric2": &metadata.Entry{Metric: "metric2", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
+		"job1/inst1/metric1": &config.MetadataConfig{Name: "metric1", PointKind: textparse.MetricTypeGauge, NumberType: config.DoubleType},
+		"job1/inst1/metric2": &config.MetadataConfig{Name: "metric2", PointKind: textparse.MetricTypeGauge, NumberType: config.DoubleType},
 	}
 	logBuffer := &bytes.Buffer{}
 	defer func() {

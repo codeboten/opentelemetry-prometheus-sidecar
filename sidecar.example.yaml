@@ -82,10 +82,10 @@ metric_renames:
 # help string used for exporting metrics.  These settings override
 # metadata discovered via Prometheus:
 static_metadata:
-- metric:     network_bps
-  type:       counter
-  value_type: int64
-  help:       Number of bits transferred by this process.
+- name:        network_bps
+  point_kind:  counter
+  number_type:  int
+  description: Number of bits transferred by this process.
 
 # Startup delay determines how long to wait before processing new
 # write-ahead-log entries after startup:

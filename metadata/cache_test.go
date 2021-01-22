@@ -25,18 +25,42 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/lightstep/opentelemetry-prometheus-sidecar/config"
 	"github.com/prometheus/prometheus/pkg/textparse"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCache_Get(t *testing.T) {
+	// Static metadata used in this test.
+	staticMetadata := []*config.MetadataConfig{
+		&config.MetadataConfig{
+			Name:        "static_metric1",
+			PointKind:   textparse.MetricTypeCounter,
+			NumberType:  config.IntType,
+			Description: "help_static1",
+		},
+		&config.MetadataConfig{
+			Name:        "static_metric2",
+			NumberType:  config.DoubleType,
+			PointKind:   textparse.MetricTypeCounter,
+			Description: "help_static2",
+		},
+		&config.MetadataConfig{
+			Name:        "metric_with_override",
+			PointKind:   textparse.MetricTypeCounter,
+			NumberType:  config.IntType,
+			Description: "help_metric_override",
+		},
+	}
+
 	metrics := []apiMetadata{
 		{Metric: "metric1", Type: textparse.MetricTypeCounter, Help: "help_metric1"},
 		{Metric: "metric2", Type: textparse.MetricTypeGauge, Help: "help_metric2"},
 		{Metric: "metric3", Type: textparse.MetricTypeHistogram, Help: "help_metric3"},
 		{Metric: "metric4", Type: textparse.MetricTypeSummary, Help: "help_metric4"},
-		{Metric: "metric5", Type: textparse.MetricTypeUnknown, Help: "help_metric5"},
-		{Metric: "metric6", Type: "unknown", Help: "help_metric6"},
-		{Metric: "metric_with_override", Type: textparse.MetricTypeGauge, Help: "help_metric_with_override"},
+		{Metric: "metric5", Type: "unknown", Help: "help_metric5"},
+		{Metric: "metric6", Type: "untyped", Help: "help_metric6"},
+		{Metric: "metric_with_override", Type: textparse.MetricTypeGauge, Help: "help_metric_override"},
 	}
 	var handler func(qMetric, qMatch string) *apiResponse
 
@@ -49,14 +73,9 @@ func TestCache_Get(t *testing.T) {
 			t.Fatal(err)
 		}
 	}))
-	expect := func(want apiMetadata, got *Entry) {
-		if !reflect.DeepEqual(want, apiMetadata{
-			Metric: got.Metric,
-			Type:   got.MetricType,
-			Help:   got.Help,
-		}) {
-			t.Errorf("unexpected result %v, want %v", got, want)
-		}
+	expect := func(want apiMetadata, got *config.MetadataConfig) {
+		require.Equal(t, want.Metric, got.Name)
+		require.Equal(t, want.Help, got.Description)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -64,12 +83,6 @@ func TestCache_Get(t *testing.T) {
 	u, err := url.Parse(ts.URL)
 	if err != nil {
 		t.Fatal(err)
-	}
-	// Create cache with static metadata.
-	staticMetadata := []*Entry{
-		&Entry{Metric: "static_metric1", MetricType: textparse.MetricTypeCounter, ValueType: INT64, Help: "help_static1"},
-		&Entry{Metric: "static_metric2", MetricType: textparse.MetricTypeCounter, ValueType: DOUBLE, Help: "help_static2"},
-		&Entry{Metric: "metric_with_override", MetricType: textparse.MetricTypeCounter, ValueType: INT64, Help: "help_metric_override"},
 	}
 	c := NewCache(nil, u, staticMetadata)
 
@@ -236,9 +249,9 @@ func TestCache_Get(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want = &Entry{
-		Metric:     "some:recording:rule",
-		MetricType: textparse.MetricTypeGauge,
+	want = &config.MetadataConfig{
+		Name:      "some:recording:rule",
+		PointKind: textparse.MetricTypeGauge,
 	}
 	if !reflect.DeepEqual(md, want) {
 		t.Errorf("expected metadata %v but got %v", want, md)
@@ -246,15 +259,15 @@ func TestCache_Get(t *testing.T) {
 }
 
 func TestNewCache(t *testing.T) {
-	static := []*Entry{
-		&Entry{Metric: "a", Help: "a"},
-		&Entry{Metric: "b", Help: "b"},
+	static := []*config.MetadataConfig{
+		&config.MetadataConfig{Name: "a", Description: "a"},
+		&config.MetadataConfig{Name: "b", Description: "b"},
 	}
 	c := NewCache(nil, nil, static)
 
-	want := map[string]*Entry{
-		"a": &Entry{Metric: "a", Help: "a"},
-		"b": &Entry{Metric: "b", Help: "b"},
+	want := map[string]*config.MetadataConfig{
+		"a": &config.MetadataConfig{Name: "a", Description: "a"},
+		"b": &config.MetadataConfig{Name: "b", Description: "b"},
 	}
 	if !reflect.DeepEqual(c.staticMetadata, want) {
 		t.Errorf("expected metadata %v but got %v", want, c.staticMetadata)

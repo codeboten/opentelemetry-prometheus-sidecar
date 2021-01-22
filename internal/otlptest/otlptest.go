@@ -369,7 +369,7 @@ func toModelKind(temp otlpmetrics.AggregationTemporality) config.PointKind {
 	if temp == otlpmetrics.AggregationTemporality_AGGREGATION_TEMPORALITY_DELTA {
 		return config.DeltaKind
 	} else if temp == otlpmetrics.AggregationTemporality_AGGREGATION_TEMPORALITY_CUMULATIVE {
-		return config.CumulativeKind
+		return config.CounterKind
 	}
 	// This is an error case, there are only two valid
 	// temporalities.  Fall back to GAUGE instead of producing an

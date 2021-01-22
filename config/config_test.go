@@ -20,7 +20,6 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/lightstep/opentelemetry-prometheus-sidecar/config"
-	"github.com/lightstep/opentelemetry-prometheus-sidecar/metadata"
 	"github.com/prometheus/prometheus/pkg/textparse"
 	"github.com/stretchr/testify/require"
 )
@@ -50,7 +49,7 @@ func TestProcessFileConfig(t *testing.T) {
 			"empty",
 			"",
 			map[string]string{},
-			[]*config.MetadataConfig{},
+			nil,
 			"",
 		},
 		{
@@ -59,34 +58,34 @@ metric_renames:
 - from: from
   to:   to
 static_metadata:
-- metric:     int64_counter
-  type:       counter
-  value_type: int64
-  help:       help1
-- metric:     double_gauge
-  type:       gauge
-  value_type: double
-  help:       help2
-- metric:     default_gauge
-  type:       gauge
-  value_type: double
+- name:        int64_counter
+  point_kind:  counter
+  number_type: int64
+  description: help1
+- name:        double_gauge
+  point_kind:  gauge
+  number_type: double
+  description: help2
+- name:        default_gauge
+  point_kind:  gauge
+  number_type: double
 `,
 			map[string]string{"from": "to"},
 			[]*config.MetadataConfig{
-				&config.MetadataConfig{Name: "int64_counter", PointKind: textparse.MetricTypeCounter, ValueType: metadata.INT64, Help: "help1"},
-				&config.MetadataConfig{Name: "double_gauge", PointKind: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE, Help: "help2"},
-				&config.MetadataConfig{Name: "default_gauge", PointKind: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
+				&config.MetadataConfig{Name: "int64_counter", PointKind: textparse.MetricTypeCounter, NumberType: config.IntType, Description: "help1"},
+				&config.MetadataConfig{Name: "double_gauge", PointKind: textparse.MetricTypeGauge, NumberType: config.DoubleType, Description: "help2"},
+				&config.MetadataConfig{Name: "default_gauge", PointKind: textparse.MetricTypeGauge, NumberType: config.DoubleType},
 			},
 			"",
 		},
 		{
 			"missing_metric_type", `
 static_metadata:
-- metric:     int64_default
-  value_type: int64
+- name:        int64_default
+  number_type: int64
 `,
 			nil, nil,
-			"invalid metric type \"\"",
+			"invalid point kind \"\"",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -100,17 +99,17 @@ static_metadata:
 				"--config-file=" + cfgFile,
 			}, readFunc)
 
-			if diff := cmp.Diff(tt.renameMappings, metricRenames); diff != "" {
-				t.Errorf("renameMappings mismatch: %v", diff)
-			}
-			if diff := cmp.Diff(tt.staticMetadata, staticMetadata); diff != "" {
-				t.Errorf("staticMetadata mismatch: %v", diff)
-			}
 			if tt.errText == "" {
 				require.NoError(t, err)
 			} else {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tt.errText)
+			}
+			if diff := cmp.Diff(tt.renameMappings, metricRenames); diff != "" {
+				t.Errorf("renameMappings mismatch: %v", diff)
+			}
+			if diff := cmp.Diff(tt.staticMetadata, staticMetadata); diff != "" {
+				t.Errorf("staticMetadata mismatch: %v", diff)
 			}
 		})
 	}
@@ -357,10 +356,10 @@ metric_renames:
   to:   correct
 
 static_metadata:
-- metric:     network_bps
-  type:       counter
-  value_type: int64
-  help:       Number of bits transferred by this process.
+- name:        network_bps
+  point_kind:  counter
+  number_type: int64
+  description: Number of bits transferred by this process.
 
 `,
 			nil,
@@ -427,7 +426,7 @@ static_metadata:
 					{From: "old_metric", To: "new_metric"},
 					{From: "mistake", To: "correct"},
 				},
-				StaticMetadata: []MetadataConfig{
+				StaticMetadata: []config.MetadataConfig{
 					{
 						Name:        "network_bps",
 						PointKind:   "counter",

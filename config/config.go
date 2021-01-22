@@ -52,13 +52,13 @@ type MetricRenamesConfig struct {
 
 // PointKind is the kind of OTLP data point, with recognized values:
 //
-// 1. "monotonic-delta-sum" a.k.a. "delta"
-// 2. "monotonic-cumulative-sum" a.k.a. "cumulative"
-// 3. "non-monotonic-delta-sum" a.k.a. "delta-gauge"
-// 4. "non-monotonic-cumulative-sum" a.k.a. "cumulative-gauge"
+// 1. "delta"
+// 2. "counter"
+// 3. "non-monotonic-delta"
+// 4. "non-monotonic-counter"
 // 5. "gauge"
-// 6. histogram (implied to be cumulative)
-// 7. summary
+// 6. "histogram"
+// 7. "summary"
 //
 // Cases 1-5 address scalar point conversions.
 //
@@ -66,8 +66,9 @@ type MetricRenamesConfig struct {
 // into OTLP's richer data for sum data points.
 //
 // Cases (2) and (5) map into Prometheus-default behaviors, therefore
-// can be used correct the wrong choice of Prometheus instrument, for
-// example.
+// can be used correct the wrong choice of Prometheus scalar instrument,
+// for example.  These cases with (6) and (7) have equivalent names with
+// textparse.MetricType.
 //
 // Cases (6) and (7) can be used to declare the expected point kind,
 // but not to change structured points into scalar points or scalar
@@ -81,23 +82,23 @@ const (
 	DoubleType NumberType = "double"
 	IntType    NumberType = "int"
 
-	DeltaKind                  PointKind = "delta"
-	CumulativeKind             PointKind = "cumulative"
-	NonMonotonicDeltaKind      PointKind = "non-monotonic-delta"
-	NonMonotonicCumulativeKind PointKind = "non-monotonic-cumulative"
-	GaugeKind                  PointKind = "gauge"
-	HistogramKind              PointKind = "histogram"
-	SummaryKind                PointKind = "summary"
+	DeltaKind               PointKind = "delta"
+	CounterKind             PointKind = "counter"
+	NonMonotonicDeltaKind   PointKind = "non-monotonic-delta"
+	NonMonotonicCounterKind PointKind = "non-monotonic-counter"
+	GaugeKind               PointKind = "gauge"
+	HistogramKind           PointKind = "histogram"
+	SummaryKind             PointKind = "summary"
 )
 
 type MetadataConfig struct {
 	// Name is the metric's exact name.  This field is exclusive
 	// with Regexp.
-	Name string `json:"name"`
+	Name string `json:"name,omitempty"`
 
 	// Regexp is a regexp matching a metric's name.  This field is
 	// exclusive with Name.
-	Regexp string `json:"regexp"`
+	Regexp string `json:"regexp,omitempty"`
 
 	// PointKind is the point kind.
 	PointKind PointKind `json:"point_kind"`
@@ -108,10 +109,10 @@ type MetadataConfig struct {
 	NumberType NumberType `json:"number_type"`
 
 	// Description is attached as the metric description.
-	Description string `json:"description"`
+	Description string `json:"description,omitempty"`
 
 	// Unit as attached as the unit string.
-	Unit string `json:"unit"`
+	Unit string `json:"unit,omitempty"`
 }
 
 type SecurityConfig struct {
@@ -378,16 +379,16 @@ func ParsePointKind(pk string) (PointKind, error) {
 	// (e.g., "gauge", "counter", "histogram"), but maps to OTLP
 	// point kinds.
 	switch strings.ToLower(pk) {
-	case "gauge", "untyped", "unknown", "": // Default case.
+	case "gauge", "untyped", "unknown":
 		return GaugeKind, nil
-	case "cumulative", "monotonic-cumulative", "counter":
-		return CumulativeKind, nil
+	case "counter", "monotonic-counter":
+		return CounterKind, nil
 	case "delta", "monotonic-delta":
 		return DeltaKind, nil
 	case "non-monotonic-delta":
 		return NonMonotonicDeltaKind, nil
-	case "non-monotonic-cumulative":
-		return NonMonotonicCumulativeKind, nil
+	case "non-monotonic-counter":
+		return NonMonotonicCounterKind, nil
 	case "histogram", "gaugehistogram":
 		// TODO: 'gaugehistogram' should be distinct
 		return HistogramKind, nil
@@ -403,7 +404,7 @@ func ParseNumberType(nt string) (NumberType, error) {
 	switch strings.ToLower(nt) {
 	case "float64", "double", "":
 		return DoubleType, nil
-	case "int64", "integer":
+	case "int64", "int", "integer":
 		return IntType, nil
 	default:
 		return DoubleType, errors.Errorf("invalid number type %q", nt)

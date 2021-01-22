@@ -21,14 +21,13 @@ import (
 	"time"
 
 	sidecar "github.com/lightstep/opentelemetry-prometheus-sidecar"
+	"github.com/lightstep/opentelemetry-prometheus-sidecar/config"
 	common_pb "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/common/v1"
 	metric_pb "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/metrics/v1"
 	"github.com/lightstep/opentelemetry-prometheus-sidecar/internal/otlptest"
-	"github.com/lightstep/opentelemetry-prometheus-sidecar/metadata"
 	"github.com/lightstep/opentelemetry-prometheus-sidecar/targets"
 	"github.com/prometheus/common/version"
 	"github.com/prometheus/prometheus/pkg/labels"
-	"github.com/prometheus/prometheus/pkg/textparse"
 	"github.com/prometheus/prometheus/tsdb/record"
 	messagediff "gopkg.in/d4l3k/messagediff.v1"
 )
@@ -46,9 +45,9 @@ func (g targetMap) Get(ctx context.Context, lset labels.Labels) (*targets.Target
 }
 
 // metadataMap implements a MetadataGetter for exact matches of job/instance/metric inputs.
-type metadataMap map[string]*metadata.Entry
+type metadataMap map[string]*config.MetadataConfig
 
-func (m metadataMap) Get(ctx context.Context, job, instance, metric string) (*metadata.Entry, error) {
+func (m metadataMap) Get(ctx context.Context, job, instance, metric string) (*config.MetadataConfig, error) {
 	return m[job+"/"+instance+"/"+metric], nil
 }
 
@@ -241,20 +240,20 @@ func TestSampleBuilder(t *testing.T) {
 			},
 			metadata: metadataMap{
 				// Gauge as double.
-				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
+				"job1/instance1/metric1": &config.MetadataConfig{Name: "metric1", PointKind: config.GaugeKind, NumberType: config.DoubleType},
 				// Gauge as integer.
-				"job1/instance1/metric3": &metadata.Entry{Metric: "metric3", MetricType: textparse.MetricTypeGauge, ValueType: metadata.INT64},
+				"job1/instance1/metric3": &config.MetadataConfig{Name: "metric3", PointKind: config.GaugeKind, NumberType: config.IntType},
 				// Gauge as default value type (double).
-				"job1/instance1/metric5": &metadata.Entry{Metric: "metric5", MetricType: textparse.MetricTypeGauge},
+				"job1/instance1/metric5": &config.MetadataConfig{Name: "metric5", PointKind: config.GaugeKind},
 				// Counter as double.
-				"job1/instance1/metric2": &metadata.Entry{Metric: "metric2", MetricType: textparse.MetricTypeCounter, ValueType: metadata.DOUBLE},
+				"job1/instance1/metric2": &config.MetadataConfig{Name: "metric2", PointKind: config.CounterKind, NumberType: config.DoubleType},
 				// Counter as integer.
-				"job1/instance1/metric4": &metadata.Entry{Metric: "metric4", MetricType: textparse.MetricTypeCounter, ValueType: metadata.INT64},
+				"job1/instance1/metric4": &config.MetadataConfig{Name: "metric4", PointKind: config.CounterKind, NumberType: config.IntType},
 				// Counter as default value type (double).
-				"job1/instance1/metric6":              &metadata.Entry{Metric: "metric6", MetricType: textparse.MetricTypeCounter},
-				"job1/instance1/labelnum_ok":          &metadata.Entry{Metric: "labelnum_ok", MetricType: textparse.MetricTypeUnknown, ValueType: metadata.DOUBLE},
-				"job1/instance1/labelnum_11k":         &metadata.Entry{Metric: "labelnum_11k", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
-				"job2/instance1/resource_from_metric": &metadata.Entry{Metric: "resource_from_metric", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
+				"job1/instance1/metric6":              &config.MetadataConfig{Name: "metric6", PointKind: config.CounterKind},
+				"job1/instance1/labelnum_ok":          &config.MetadataConfig{Name: "labelnum_ok", PointKind: config.GaugeKind, NumberType: config.DoubleType},
+				"job1/instance1/labelnum_11k":         &config.MetadataConfig{Name: "labelnum_11k", PointKind: config.GaugeKind, NumberType: config.DoubleType},
+				"job2/instance1/resource_from_metric": &config.MetadataConfig{Name: "resource_from_metric", PointKind: config.GaugeKind, NumberType: config.DoubleType},
 			},
 			input: []record.RefSample{
 				{Ref: 2, T: 2000, V: 5.5}, // 0
@@ -404,7 +403,7 @@ func TestSampleBuilder(t *testing.T) {
 				},
 			},
 			metadata: metadataMap{
-				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
+				"job1/instance1/metric1": &config.MetadataConfig{Name: "metric1", PointKind: config.GaugeKind, NumberType: config.DoubleType},
 			},
 			series: seriesMap{
 				1: labels.FromStrings("job", "job1", "instance", "instance_notfound", "__name__", "metric1"),
@@ -428,7 +427,7 @@ func TestSampleBuilder(t *testing.T) {
 				},
 			},
 			metadata: metadataMap{
-				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeSummary, ValueType: metadata.DOUBLE},
+				"job1/instance1/metric1": &config.MetadataConfig{Name: "metric1", PointKind: config.SummaryKind, NumberType: config.DoubleType},
 			},
 			series: seriesMap{
 				1: labels.FromStrings("job", "job1", "instance", "instance1", "__name__", "metric1_sum"),
@@ -489,8 +488,8 @@ func TestSampleBuilder(t *testing.T) {
 				},
 			},
 			metadata: metadataMap{
-				"job1/instance1/metric1":         &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeHistogram, ValueType: metadata.DOUBLE},
-				"job1/instance1/metric1_a_count": &metadata.Entry{Metric: "metric1_a_count", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
+				"job1/instance1/metric1":         &config.MetadataConfig{Name: "metric1", PointKind: config.HistogramKind, NumberType: config.DoubleType},
+				"job1/instance1/metric1_a_count": &config.MetadataConfig{Name: "metric1_a_count", PointKind: config.GaugeKind, NumberType: config.DoubleType},
 			},
 			series: seriesMap{
 				1: labels.FromStrings("job", "job1", "instance", "instance1", "__name__", "metric1_sum"),
@@ -587,8 +586,8 @@ func TestSampleBuilder(t *testing.T) {
 				},
 			},
 			metadata: metadataMap{
-				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeCounter, ValueType: metadata.DOUBLE},
-				"job1/instance2/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeCounter, ValueType: metadata.DOUBLE},
+				"job1/instance1/metric1": &config.MetadataConfig{Name: "metric1", PointKind: config.CounterKind, NumberType: config.DoubleType},
+				"job1/instance2/metric1": &config.MetadataConfig{Name: "metric1", PointKind: config.CounterKind, NumberType: config.DoubleType},
 			},
 			input: []record.RefSample{
 				// First sample for both series will define the reset timestamp.
@@ -638,7 +637,7 @@ func TestSampleBuilder(t *testing.T) {
 				},
 			},
 			metadata: metadataMap{
-				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
+				"job1/instance1/metric1": &config.MetadataConfig{Name: "metric1", PointKind: config.GaugeKind, NumberType: config.DoubleType},
 			},
 			metricsPrefix: "test.otel.io/",
 			input: []record.RefSample{
@@ -668,7 +667,7 @@ func TestSampleBuilder(t *testing.T) {
 				},
 			},
 			metadata: metadataMap{
-				"job1/instance1/metric1_total": &metadata.Entry{Metric: "metric1_total", MetricType: textparse.MetricTypeCounter, ValueType: metadata.DOUBLE},
+				"job1/instance1/metric1_total": &config.MetadataConfig{Name: "metric1_total", PointKind: config.CounterKind, NumberType: config.DoubleType},
 			},
 			input: []record.RefSample{
 				{Ref: 1, T: 2000, V: 5.5},
@@ -701,7 +700,7 @@ func TestSampleBuilder(t *testing.T) {
 				},
 			},
 			metadata: metadataMap{
-				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeCounter, ValueType: metadata.DOUBLE},
+				"job1/instance1/metric1": &config.MetadataConfig{Name: "metric1", PointKind: config.CounterKind, NumberType: config.DoubleType},
 			},
 			input: []record.RefSample{
 				{Ref: 1, T: 2000, V: 5.5},
@@ -734,7 +733,7 @@ func TestSampleBuilder(t *testing.T) {
 				},
 			},
 			metadata: metadataMap{
-				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1", MetricType: textparse.MetricTypeGauge, ValueType: metadata.DOUBLE},
+				"job1/instance1/metric1": &config.MetadataConfig{Name: "metric1", PointKind: config.GaugeKind, NumberType: config.DoubleType},
 			},
 			input: []record.RefSample{
 				{Ref: 1, T: 3000, V: 8},
@@ -761,7 +760,7 @@ func TestSampleBuilder(t *testing.T) {
 				1: labels.FromStrings("job", "job1", "instance", "instance1", "__name__", "metric1_count"),
 			},
 			metadata: metadataMap{
-				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1_count", MetricType: textparse.MetricTypeSummary, ValueType: metadata.DOUBLE},
+				"job1/instance1/metric1": &config.MetadataConfig{Name: "metric1_count", PointKind: config.SummaryKind, NumberType: config.DoubleType},
 			},
 			input: []record.RefSample{
 				// A first non-NaN sample is necessary to avoid false-positives, since the
@@ -786,7 +785,7 @@ func TestSampleBuilder(t *testing.T) {
 				1: labels.FromStrings("job", "job1", "instance", "instance1", "__name__", "metric1_count"),
 			},
 			metadata: metadataMap{
-				"job1/instance1/metric1": &metadata.Entry{Metric: "metric1_count", MetricType: textparse.MetricTypeSummary, ValueType: metadata.DOUBLE},
+				"job1/instance1/metric1": &config.MetadataConfig{Name: "metric1_count", PointKind: config.SummaryKind, NumberType: config.DoubleType},
 			},
 			input: []record.RefSample{
 				// A first non-NaN sample is necessary to avoid false-positives, since the

@@ -397,8 +397,8 @@ func (c *seriesCache) refresh(ctx context.Context, ref uint64) error {
 	sort.Sort(&ts.Labels)
 
 	switch meta.PointKind {
-	case config.CumulativeKind:
-		ts.PointKind = config.CumulativeKind
+	case config.CounterKind:
+		ts.PointKind = config.CounterKind
 		ts.NumberType = meta.NumberType
 		if baseMetricName != "" && suffix == metricSuffixTotal {
 			ts.Name = c.getMetricName(c.metricsPrefix, baseMetricName)
@@ -409,10 +409,10 @@ func (c *seriesCache) refresh(ctx context.Context, ref uint64) error {
 	case textparse.MetricTypeSummary:
 		switch suffix {
 		case metricSuffixSum:
-			ts.PointKind = config.CumulativeKind
+			ts.PointKind = config.CounterKind
 			ts.NumberType = config.DoubleType
 		case metricSuffixCount:
-			ts.PointKind = config.CumulativeKind
+			ts.PointKind = config.CounterKind
 			ts.NumberType = config.IntType
 		case "": // Actual quantiles.
 			ts.PointKind = config.GaugeKind

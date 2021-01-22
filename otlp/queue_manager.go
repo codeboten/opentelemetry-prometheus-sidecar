@@ -27,7 +27,7 @@ import (
 	metric_pb "github.com/lightstep/opentelemetry-prometheus-sidecar/internal/opentelemetry-proto-gen/metrics/v1"
 	"github.com/lightstep/opentelemetry-prometheus-sidecar/tail"
 	"github.com/pkg/errors"
-	"github.com/prometheus/prometheus/config"
+	promconfig "github.com/prometheus/prometheus/config"
 	"go.opentelemetry.io/otel/label"
 	"go.opentelemetry.io/otel/metric"
 	"golang.org/x/time/rate"
@@ -79,7 +79,7 @@ type StorageClientFactory interface {
 type QueueManager struct {
 	logger log.Logger
 
-	cfg           config.QueueConfig
+	cfg           promconfig.QueueConfig
 	clientFactory StorageClientFactory
 	queueName     string
 	logLimiter    *rate.Limiter
@@ -106,7 +106,7 @@ type QueueManager struct {
 }
 
 // NewQueueManager builds a new QueueManager.
-func NewQueueManager(logger log.Logger, cfg config.QueueConfig, clientFactory StorageClientFactory, tailer *tail.Tailer) (*QueueManager, error) {
+func NewQueueManager(logger log.Logger, cfg promconfig.QueueConfig, clientFactory StorageClientFactory, tailer *tail.Tailer) (*QueueManager, error) {
 	if logger == nil {
 		logger = log.NewNopLogger()
 	}
@@ -369,7 +369,7 @@ type shard struct {
 	queue chan queueEntry
 }
 
-func newShard(cfg config.QueueConfig) shard {
+func newShard(cfg promconfig.QueueConfig) shard {
 	return shard{
 		queue: make(chan queueEntry, cfg.Capacity),
 	}
