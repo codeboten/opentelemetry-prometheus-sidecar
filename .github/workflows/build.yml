@@ -24,7 +24,7 @@ jobs:
         cd $HOME/prom
         git clone https://github.com/prometheus/prometheus.git
         cd $HOME/prom/prometheus
-        git checkout v`cat $HOME/go/src/github.com/$GITHUB_REPOSITORY/PROM_VERSION`
+        git checkout v`cat $GITHUB_WORKSPACE/PROM_VERSION`
         go install ./cmd/prometheus
 
     - name: Build
