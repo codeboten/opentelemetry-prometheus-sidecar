@@ -36,7 +36,9 @@ jobs:
         username: ${{secrets.DOCKER_USERNAME}}
         password: ${{secrets.DOCKER_PASSWORD}}
         repository: aboten/prom-sidecar
-        tags: main-test
+        tags: |
+          main
+          $GITHUB_SHA
 
     # Runs a single command using the runners shell
     - name: Run a one-line script
